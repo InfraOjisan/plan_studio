@@ -1,5 +1,7 @@
 # plan_studio
 
+NewBusinessPlan and New IT Service Planning Studio tools
+
 生成 AI に商品・サービスの企画を出させ、企画書のたたきまで進める道具です。テーマを入れると、複数のモデルが企画の素案を出し、似た案と外れた案を見分け、選んだ案から企画原案（企画書のベースになる文書）を作り、PowerPoint の Copilot・Claude・ChatGPT・Gemini に渡せば企画書になる「たたき」まで、一つの画面で進みます。
 
 [novel_studio](https://github.com/InfraOjisan/novel_studio)（小説を書く道具）の企画コンペの部分を、事業企画用に分けたものです（novel_studio の Issue #3「汎用の企画提案」）。
