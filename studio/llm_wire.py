@@ -1,4 +1,4 @@
-"""llm_wire — モデルの窓口ごとの「言い方」の違いを吸収する（標準ライブラリのみ）。engine の call_llm.py と studio の llm.py が使う。
+"""llm_wire — モデルの窓口ごとの「言い方」の違いを吸収する（標準ライブラリのみ）。studio の llm.py が使う（novel_studio v1.1.1 の engine/tools/llm_wire.py から分けた）。
 
 窓口（プロトコル）は3種類:
   chat       OpenAI 互換の /chat/completions（OpenRouter、OpenCode の DeepSeek・GLM・Kimi・MiMo など）
@@ -20,7 +20,7 @@ import os
 import re
 import uuid
 
-UA = "novel-studio/1.1 (+https://github.com/InfraOjisan/novel_studio)"
+UA = "plan-studio/0.1 (+https://github.com/InfraOjisan/plan_studio)"
 
 GO_RULES = [(r"^(claude-|minimax|qwen)", "messages"), (r"^(gpt|grok|muse)", "responses")]
 ZEN_RULES = [(r"^claude-", "messages"), (r"^qwen3\.8-max", "chat"), (r"^qwen3\.[5-8]-(flash|plus|max)", "messages"),

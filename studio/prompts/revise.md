@@ -1,7 +1,7 @@
 <!-- STUDIO: revise -->
-# 企画案の改稿
+# 企画の素案の改稿
 
-プロデューサーが下の企画案を気に入り、指示を付けて改稿を求めています。
+企画責任者が下の素案を気に入り、指示を付けて改稿を求めています。
 
 <資料 名前="テーマ">
 {{THEME}}
@@ -11,15 +11,16 @@
 {{PROPOSAL}}
 </資料>
 
-<資料 名前="プロデューサーの指示">
+<資料 名前="企画責任者の指示">
 {{INSTRUCTION}}
 </資料>
 
 ## やること
-- 指示に沿って案を直してください。指示の指摘を「消す」のではなく、指摘の元にある問題を「解く」こと（指摘を避けるために主題から逃げない）。
+- 指示に沿って案を直してください。指示の指摘を「消す」のではなく、指摘の元にある問題を「解く」こと（指摘を避けるために企画の芯から逃げない）。
 - 指示に無いところは、できるだけ元の案のまま残してください。
-- 欄は元の案と同じです（kind, genre, title, setting, synopsis, highlight, appeal, must_keep, genre_reason）。
+- 欄と字数の上限は元の案と同じです（title 50字、verdict 30字、summary 1000字、resources 500字、market 500字、judgment 500字）。
+- 数字には出典を書くか、「推定」と書いて推定の筋道を一言添えてください。架空の統計や会社名を作らないこと。
 
 ## 出力
 JSON だけを返してください。
-{"proposal":{"kind":"","genre":"","title":"","setting":"","synopsis":"","highlight":"","appeal":"","must_keep":"","genre_reason":""},"changes":"何をどう変えたか（150字以内）"}
+{"proposal":{"kind":"","genre":"","title":"","verdict":"","summary":"","resources":"","market":"","judgment":"","sources":""},"changes":"何をどう変えたか（150字以内）"}

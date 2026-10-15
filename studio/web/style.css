@@ -1,6 +1,6 @@
-/* novel_studio
-   紙＝原稿用紙の地、罫＝萌黄の罫線、墨＝本文、藍＝操作、朱＝確定と承認（判子）と校正の赤だけ。
-   工程の帯は右端に縦書きで置く（縦書きの本と同じく、右から左へ進む）。 */
+/* plan_studio（novel_studio の画面から分けた）
+   紙＝企画書の地、罫＝薄い罫線、墨＝本文、藍＝操作、朱＝外れ値・超過・警告だけ。
+   工程の帯は右端に縦書きで置く（novel_studio と同じ手ざわり）。 */
 :root {
   --paper: #f5f7f1;
   --sheet: #fcfdf9;
@@ -189,11 +189,38 @@ dialog::backdrop { background: rgba(20, 24, 22, .45); }
   .work-pick select { min-width: 0; }
 }
 
-/* 表紙 */
-.cover-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; align-items: start; }
-.cover-form { display: grid; gap: 14px; max-width: 620px; }
-.cover-form p { margin: 0; }
-.f-group { display: flex; flex-direction: column; gap: 6px; }
+/* テーマを直して新しい企画で出し直す */
+.derive { border-top: 1px solid var(--rule); margin-top: 18px; padding-top: 6px; }
+details.retheme { margin-top: 18px; }
+details.retheme summary { cursor: pointer; color: var(--ink-2); }
+
+/* 企画（plan_studio） */
+.sheet .verdict { margin: 0 0 6px; font-size: 13px; color: var(--indigo); font-weight: 600; }
+.sheet dt .n { margin-left: 8px; font-size: 11px; color: var(--ink-2); }
+.tag.over { border-color: var(--shu); color: var(--shu); }
+.form.one { grid-template-columns: 1fr; }
+label.f.check > span:first-child { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 14px; }
+.count { align-self: flex-end; font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; margin-top: -2px; }
+.count.over { color: var(--shu); }
+.borrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.borrow label.chip { display: inline-flex; gap: 6px; align-items: center; color: var(--ink); }
+.borrow label.chip.out { border-color: var(--shu); }
+.tabs .on { border-color: var(--indigo); color: var(--indigo); background: var(--indigo-soft); }
+a.btn { display: inline-block; text-decoration: none; border-radius: 2px; padding: 7px 14px; }
+a.act.btn { background: var(--indigo); color: #fff; border: 1px solid var(--indigo); }
+a.ghost.btn { border: 1px solid var(--rule); color: var(--ink); }
+a.ghost.small.btn { font-size: 12.5px; padding: 3px 9px; }
+a.ghost.btn:hover { border-color: var(--indigo); color: var(--indigo); }
+.deckhead h2 { margin-top: 6px; }
+ol.slides { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 12px; }
+.slide { display: grid; grid-template-columns: 38px 1fr; gap: 12px; background: var(--sheet); border: 1px solid var(--rule); padding: 12px 16px; }
+.slide .sn { font-family: var(--mincho); font-size: 22px; color: var(--rule); text-align: right; line-height: 1.2; }
+.slide h3 { margin: 0 0 4px; font-size: 16px; }
+.slide .msg { margin: 0 0 6px; font-weight: 600; color: var(--indigo); }
+.slide ul { margin: 4px 0; padding-left: 1.2em; font-size: 14px; }
+.slide .vis { margin: 6px 0 0; font-size: 13px; color: var(--moss); }
+.slide .notes { font-size: 13px; color: var(--ink-2); margin: 4px 0; }
+.slide mark { background: var(--shu-soft); color: var(--shu); padding: 0 2px; }
 .seg { display: inline-flex; border: 1px solid var(--rule); width: max-content; max-width: 100%; flex-wrap: wrap; }
 .seg label { cursor: pointer; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
@@ -201,17 +228,5 @@ dialog::backdrop { background: rgba(20, 24, 22, .45); }
 .seg label:last-child span { border-right: 0; }
 .seg input:checked + span { background: var(--indigo); color: #fff; }
 .seg input:focus-visible + span { outline: 2px solid var(--indigo); outline-offset: -3px; }
-.cover-preview img { width: 100%; aspect-ratio: 5 / 8; object-fit: cover; border: 1px solid var(--rule); display: block;
-  box-shadow: 0 1px 0 var(--rule), 6px 8px 0 -2px var(--rule-soft); }
-.cover-preview p { margin-top: 10px; }
-.cover-empty { aspect-ratio: 5 / 8; border: 1px dashed var(--rule); display: grid; place-items: center; color: var(--ink-2); font-family: var(--mincho); }
-@media (max-width: 760px) { .cover-grid { grid-template-columns: 1fr; } .cover-preview { max-width: 240px; } }
-
-/* 上位モデルの手直しの履歴 */
-ol.hist { margin: 4px 0 10px; padding-left: 1.4em; font-size: 13.5px; }
-ol.hist li { margin: 2px 0; }
-
-/* テーマを直して新しい作品で出し直す（v1.1.1） */
-.derive { border-top: 1px solid var(--rule); margin-top: 18px; padding-top: 6px; }
-details.retheme { margin-top: 18px; }
-details.retheme summary { cursor: pointer; color: var(--ink-2); }
+pre.prompt { font-family: var(--gothic); font-size: 13px; max-height: 340px; }
+dialog.wide { width: min(980px, 96vw); }

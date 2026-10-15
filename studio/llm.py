@@ -1,11 +1,14 @@
-"""llm — studio のモデル呼び出し（OpenRouter・OpenCode など。標準ライブラリのみ）。1回ごとの費用を返す。
+"""llm — studio のモデル呼び出し（OpenRouter・OpenCode・社内のモデルルーターなど OpenAI 互換の窓口。標準ライブラリのみ）。
 
-engine の tools/call_llm.py はストリーミングで長い本文を受ける。studio の依頼（提案・骨格・BRIEF）は
-JSON を一つ返すだけなので、ストリーミングなしで受け、usage.cost（ドル）を記録する。
-cost が返らないプロバイダのときは、/models の単価から計算する。
+依頼（提案・骨格・原案・たたき）は JSON を一つ返すだけなので、ストリーミングなしで受け、usage.cost（ドル）を記録する。
+cost が返らないプロバイダのときは、公開価格の表か /models の単価から計算する。
+
+環境変数は PLAN_*（PLAN_LLM_BASE_URL・PLAN_PROVIDER_APIKEY・PLAN_LLM_PROTOCOLS・PLAN_LLM_PRICES・PLAN_WORKS_DIR）。
+novel_studio と同じ NOVEL_* の名前もそのまま読む（同じ .env を使い回せるように）。
 """
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -13,23 +16,29 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 import sys  # noqa: E402
-sys.path.insert(0, str(REPO / "engine" / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import llm_wire as wire  # noqa: E402  窓口ごとの違い（ヘッダ・/responses・/messages）
+for _k, _v in list(os.environ.items()):  # PLAN_* を NOVEL_* としても読めるように（llm_wire は NOVEL_* を見る）
+    if _k.startswith("PLAN_"):
+        os.environ.setdefault("NOVEL_" + _k[5:], _v)
 KEY_NAMES = ["NOVEL_PROVIDER_APIKEY", "NOVEL_LLM_API_KEY", "OPENROUTER_API_KEY", "HERMES_CUSTOM_OPENROUTER_API_KEY"]
 CACHE = Path(__file__).resolve().parent / ".cache"
 
 
 def _dotenv(name):
-    """リポジトリ直下・studio/・作品置き場（NOVEL_WORKS_DIR）の .env から値を読む。"""
+    """リポジトリ直下・studio/・企画置き場（PLAN_WORKS_DIR）の .env から値を読む。NOVEL_X を聞かれたら PLAN_X も探す（PLAN_ が先）。"""
+    names = (["PLAN_" + name[6:]] if name.startswith("NOVEL_") else []) + [name]
     places = [REPO / ".env", REPO / "studio" / ".env", REPO / "works" / ".env"]
-    if os.environ.get("NOVEL_WORKS_DIR"):
-        places.insert(0, Path(os.environ["NOVEL_WORKS_DIR"]) / ".env")
-    for env in places:
-        if env.exists():
-            for line in env.read_text(encoding="utf-8").splitlines():
-                k, _, v = line.strip().partition("=")
-                if k.strip().removeprefix("export ").strip() == name and v.strip():
-                    return v.strip().strip('"').strip("'")
+    wd = os.environ.get("PLAN_WORKS_DIR") or os.environ.get("NOVEL_WORKS_DIR")
+    if wd:
+        places.insert(0, Path(wd) / ".env")
+    for nm in names:
+        for env in places:
+            if env.exists():
+                for line in env.read_text(encoding="utf-8").splitlines():
+                    k, _, v = line.strip().partition("=")
+                    if k.strip().removeprefix("export ").strip() == nm and v.strip():
+                        return v.strip().strip('"').strip("'")
     return None
 
 
@@ -44,7 +53,7 @@ def base_url():
 
 
 def find_key():
-    for n in KEY_NAMES:
+    for n in ["PLAN_PROVIDER_APIKEY", "PLAN_LLM_API_KEY"] + KEY_NAMES:
         if os.environ.get(n):
             return os.environ[n].strip()
     for n in KEY_NAMES:
@@ -59,7 +68,9 @@ def models(refresh=False):
     CACHE.mkdir(exist_ok=True)
     f = CACHE / f"models_{_base_tag()}.json"
     if f.exists() and not refresh and time.time() - f.stat().st_mtime < 86400:
-        return json.loads(f.read_text(encoding="utf-8"))
+        cached = _read_cache(f)
+        if cached is not None:
+            return cached
     try:
         with urllib.request.urlopen(urllib.request.Request(base_url() + "/models", headers={"User-Agent": wire.UA}), timeout=20) as r:
             data = json.loads(r.read().decode("utf-8")).get("data", [])
@@ -75,39 +86,20 @@ def models(refresh=False):
             out.append({"id": m["id"], "name": m.get("name", m["id"]), "in_per_m": round(pin, 4), "out_per_m": round(pout, 4),
                         "context": m.get("context_length")})
         out.sort(key=lambda x: x["id"])
-        f.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        # 並列の提案が同時に読み書きするので、書きかけを読ませない（別名に書いてから差し替える）
+        tmp = f.with_name(f"{f.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
         return out
     except (urllib.error.URLError, OSError, ValueError, KeyError):
-        if f.exists():
-            return json.loads(f.read_text(encoding="utf-8"))
-        return []
+        return _read_cache(f) or []
 
 
-def image_models(refresh=False):
-    """画像生成モデルの一覧 [{id, name, price}]。OpenRouter の /images/models、なければ /models?output_modalities=image。1日キャッシュ。"""
-    CACHE.mkdir(exist_ok=True)
-    f = CACHE / f"image_models_{_base_tag()}.json"
-    if f.exists() and not refresh and time.time() - f.stat().st_mtime < 86400:
+def _read_cache(f):
+    try:
         return json.loads(f.read_text(encoding="utf-8"))
-    for path in ("/images/models", "/models?output_modalities=image"):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(base_url() + path, headers={"User-Agent": wire.UA}), timeout=20) as r:
-                data = json.loads(r.read().decode("utf-8")).get("data", [])
-        except (urllib.error.URLError, OSError, ValueError):
-            continue
-        out = []
-        for m in data:
-            outs = ((m.get("architecture") or {}).get("output_modalities")) or []
-            if outs and "image" not in outs:
-                continue
-            p = m.get("pricing") or {}
-            price = p.get("image") or p.get("completion") or ""
-            out.append({"id": m["id"], "name": m.get("name", m["id"]), "price": str(price)})
-        if out:
-            out.sort(key=lambda x: x["id"])
-            f.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-            return out
-    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+    except (OSError, ValueError):
+        return None
 
 
 def price_of(model):
@@ -137,7 +129,7 @@ def _body(proto, base, model, system, prompt, temperature, max_tokens, json_mode
 
 def chat(model, prompt, system="", temperature=0.7, max_tokens=16000, json_mode=True, reasoning=None, timeout=600, retries=2, session=None):
     """返り値：(本文, 記録)。記録 = {model, in, out, usd, sec, finish, protocol, est}。失敗は LLMError。
-    窓口（/chat/completions・/responses・/messages）はモデルと base_url から決める（engine/tools/llm_wire.py）。
+    窓口（/chat/completions・/responses・/messages）はモデルと base_url から決める（llm_wire.py）。
     OpenCode で窓口が合わなかった（404 など）ときは、ほかの窓口を一度ずつ試す。"""
     key = find_key()
     if not key:

@@ -1,9 +1,9 @@
 """similarity — 提案の「収束／バリエーション／外れ値」を、ルールで分類する（LLM に判定させない）。
 
-Novel_4 の検証で分かったこと：
+novel_studio（小説の企画コンペ）の検証で分かったこと：
   - AI の審判は重複の判定がぶれる（ARI 0.115〜1.0）。重複はルールで判定する。
-  - 企画は類型に収束する（ミステリ5/5が「語り手が加害者」、SF 4/5 が「AI管理の冷凍睡眠船」）。
-  - 収束しているのは表面の言葉より「骨格」（誰が欺く・何を隠す・どの層で驚かせる・何がひっくり返る）。
+  - 企画は類型に収束する。収束しているのは表面の言葉より「骨格」。
+事業企画の骨格は「誰の・何の課題を・どう解き・どこで儲け・何で勝ち・どんな市場か」。
 そこで、LLM には骨格の抽出だけをさせ（安いモデルで十分）、似ているかどうかは
 「本文の文字2-gram の近さ」と「骨格の欄ごとの近さ」を混ぜた点数で、平均連結のクラスタリングにかける。
 しきい値は画面で動かせ、LLM を呼び直さずに分類し直せる。
@@ -12,8 +12,9 @@ import math
 import re
 from collections import Counter
 
-SK_FIELDS = ["deceiver", "hidden", "layer", "flip", "stage", "ending"]
-TEXT_FIELDS = ["title", "setting", "synopsis", "highlight"]
+# 事業の骨格（customer=誰の、pain=何の課題、solution=解き方の型、revenue=儲け方、edge=勝ち筋、market=市場の型）
+SK_FIELDS = ["customer", "pain", "solution", "revenue", "edge", "market"]
+TEXT_FIELDS = ["title", "summary", "market"]
 
 
 def norm(s):
@@ -41,15 +42,16 @@ def field_sim(x, y):
     return cos(grams(x, 1), grams(y, 1)) * 0.5 + cos(grams(x), grams(y)) * 0.5
 
 
-def pair_score(p, q, sp, sq, w_text=0.4):
-    t = cos(grams(" ".join(str(p.get(f, "")) for f in TEXT_FIELDS)), grams(" ".join(str(q.get(f, "")) for f in TEXT_FIELDS)))
+def pair_score(p, q, sp, sq, w_text=0.4, sk_fields=None, text_fields=None):
+    skf, txf = sk_fields or SK_FIELDS, text_fields or TEXT_FIELDS
+    t = cos(grams(" ".join(str(p.get(f, "")) for f in txf)), grams(" ".join(str(q.get(f, "")) for f in txf)))
     if sp and sq:
-        k = sum(field_sim(sp.get(f), sq.get(f)) for f in SK_FIELDS) / len(SK_FIELDS)
+        k = sum(field_sim(sp.get(f), sq.get(f)) for f in skf) / len(skf)
         return w_text * t + (1 - w_text) * k, t, k
     return t, t, None
 
 
-def classify(props, skeletons, threshold=0.5, w_text=0.4):
+def classify(props, skeletons, threshold=0.5, w_text=0.4, sk_fields=None, text_fields=None):
     """props: [{id, ...}]、skeletons: {id: {...}}。返り値：{labels:{id:{label,cluster,nearest,sim}}, clusters:[...], matrix:{}}"""
     ids = [p["id"] for p in props]
     P = {p["id"]: p for p in props}
@@ -58,7 +60,7 @@ def classify(props, skeletons, threshold=0.5, w_text=0.4):
     for i in range(n):
         for j in range(i + 1, n):
             a, b = ids[i], ids[j]
-            s, t, k = pair_score(P[a], P[b], skeletons.get(a), skeletons.get(b), w_text)
+            s, t, k = pair_score(P[a], P[b], skeletons.get(a), skeletons.get(b), w_text, sk_fields, text_fields)
             S[(a, b)] = S[(b, a)] = round(s, 3)
     # 平均連結の凝集型クラスタリング
     clusters = [[x] for x in ids]
@@ -88,7 +90,7 @@ def classify(props, skeletons, threshold=0.5, w_text=0.4):
             lab = None
         sk = [skeletons.get(x) or {} for x in c]
         common = {}
-        for f in SK_FIELDS:
+        for f in (sk_fields or SK_FIELDS):
             vals = Counter(norm(s.get(f)) for s in sk if s.get(f))
             if vals:
                 v, cnt = vals.most_common(1)[0]

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""novel_studio — 小説を1から書くための Web アプリ（標準ライブラリのみ。Python 3.9 以上）。
+"""plan_studio — 商品・サービスの企画を、複数のモデルのコンペから企画書のたたきまで進める Web アプリ（標準ライブラリのみ。Python 3.9 以上）。
 
-  python3 studio/server.py [--port 8780] [--host 127.0.0.1]
-  → ブラウザで http://127.0.0.1:8780
+  python3 studio/server.py [--port 8790] [--host 127.0.0.1]
+  → ブラウザで http://127.0.0.1:8790
 
-APIキー：リポジトリ直下の .env（OPENROUTER_API_KEY=... または NOVEL_PROVIDER_APIKEY=...）か環境変数。キーは画面には出しません。
+APIキー：リポジトリ直下の .env（OPENROUTER_API_KEY=... または PLAN_PROVIDER_APIKEY=...）か環境変数。キーは画面には出しません。
+社内のモデルルーターなど OpenAI 互換の窓口：PLAN_LLM_BASE_URL=https://.../v1
 費用をかけずに試す：python3 studio/devtools/mock_openrouter.py を立ててから
-  NOVEL_LLM_BASE_URL=http://127.0.0.1:8765/api/v1 NOVEL_PROVIDER_APIKEY=mock python3 studio/server.py
+  PLAN_LLM_BASE_URL=http://127.0.0.1:8765/api/v1 PLAN_PROVIDER_APIKEY=mock python3 studio/server.py
 
-時間のかかる工程（提案・分類・BRIEF・上位モデルの例外処理・校正）はジョブとして裏で走り、画面は /api/jobs/<id> を見て待ちます。
+時間のかかる工程（提案・改稿・分類・原案・たたき）はジョブとして裏で走り、画面は /api/jobs/<id> を見て待ちます。
 自分の手元（127.0.0.1）だけで使う前提です。外に公開しないでください。
 """
 import argparse
@@ -24,6 +25,7 @@ from pathlib import Path
 
 import core
 import llm
+import outputs
 
 WEB = Path(__file__).resolve().parent / "web"
 JOBS = {}
@@ -56,7 +58,7 @@ def running_jobs(slug):
 
 
 class H(BaseHTTPRequestHandler):
-    server_version = "novel-studio/1.0"
+    server_version = "plan-studio/0.1"
 
     def log_message(self, fmt, *a):
         if "/api/jobs/" not in (a[0] if a else ""):
@@ -89,8 +91,6 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, raw=f.read_bytes(), ctype=(mimetypes.guess_type(str(f))[0] or "text/plain") + "; charset=utf-8")
             if parts[1:] == ["works"]:
                 return self._send(200, {"works": core.list_works(), "has_key": bool(llm.find_key()), "base_url": llm.base_url()})
-            if parts[1:] == ["image-models"]:
-                return self._send(200, {"models": llm.image_models(refresh=q.get("refresh") == "1"), "settings": core.settings()})
             if parts[1:] == ["models"]:
                 return self._send(200, {"models": llm.models(refresh=q.get("refresh") == "1"), "settings": core.settings()})
             if parts[1] == "jobs" and len(parts) == 3:
@@ -102,18 +102,13 @@ class H(BaseHTTPRequestHandler):
                     snap = core.snapshot(slug)
                     snap["jobs"] = running_jobs(slug)
                     return self._send(200, snap)
-                if parts[3] == "file":
-                    t = core.read_file(slug, q.get("path", ""))
-                    if t is None:  # まだ無いのは異常ではない（画面が毎回確かめる）
-                        return self._send(200, {"path": q.get("path"), "text": None})
-                    if isinstance(t, Path) and t.suffix != ".epub":
-                        return self._send(200, raw=t.read_bytes(), ctype=mimetypes.guess_type(t.name)[0] or "image/png")
-                    if isinstance(t, Path):
-                        return self._send(200, raw=t.read_bytes(), ctype="application/epub+zip",
-                                          headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(t.name)}"})
-                    return self._send(200, {"path": q.get("path"), "text": t})
-                if parts[3] == "brief" and len(parts) == 5:
-                    return self._send(200, core.render_brief(slug, parts[4]))
+                if parts[3] == "export":
+                    name, data, ctype = core.export(slug, q.get("kind", ""), q.get("v", "0"), q.get("tool", "claude"))
+                    disp = "inline" if q.get("inline") == "1" else "attachment"
+                    return self._send(200, raw=data, ctype=ctype,
+                                      headers={"Content-Disposition": f"{disp}; filename*=UTF-8''{urllib.parse.quote(name)}"})
+                if parts[3] == "prompts":
+                    return self._send(200, {"prompts": core.tool_prompts(slug, q.get("v", "0")), "tools": outputs.TOOLS})
             return self._send(404, {"error": "not found"})
         except core.StudioError as e:
             return self._send(400, {"error": str(e)})
@@ -136,7 +131,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"slug": st["slug"]})
             if act == "propose":
                 return self._send(200, {"job": run_job(slug, "propose", core.propose, slug, b["models"], b.get("n", 2), b.get("instruction", ""),
-                                                       b.get("mode", "new"), float(b.get("temperature", 0.8)))})
+                                                       b.get("mode", "new"), float(b.get("temperature", 0.8)), web=bool(b.get("web")))})
             if act == "edit":
                 return self._send(200, {"pid": core.edit_proposal(slug, b["pid"], b["fields"])})
             if act == "revise":
@@ -152,21 +147,16 @@ class H(BaseHTTPRequestHandler):
             if act == "select":
                 core.select(slug, b["pid"])
                 return self._send(200, {"ok": True})
-            if act == "brief":
-                return self._send(200, {"job": run_job(slug, "brief", core.make_brief, slug, b.get("model"), b.get("instruction", ""), b.get("base"))})
-            if act == "brief_edit":
-                return self._send(200, {"v": core.edit_brief(slug, b["v"], b["brief"])})
-            if act == "fix":
-                return self._send(200, core.fix(slug, b["v"], b.get("roles"), b.get("budget")))
-            if act == "approve":
-                return self._send(200, core.approve(slug, b["fingerprint"]))
-            if act == "edits":
-                return self._send(200, core.set_edits(slug, b["enabled"]))
-            if act == "engine":
-                a = b.get("action")
-                if a in ("rescue_canon", "rescue_chapter", "proofread", "cover"):
-                    return self._send(200, {"job": run_job(slug, a, core.engine_action, slug, a, b)})
-                return self._send(200, core.engine_action(slug, a, b))
+            if act == "draft":
+                return self._send(200, {"job": run_job(slug, "draft", core.make_draft, slug, b.get("model"), b.get("instruction", ""),
+                                                       b.get("base"), b.get("borrow") or [])})
+            if act == "draft_edit":
+                return self._send(200, {"v": core.edit_draft(slug, b["v"], b["fields"])})
+            if act == "deck":
+                return self._send(200, {"job": run_job(slug, "deck", core.make_deck, slug, b.get("draft_v"), b.get("opts"), b.get("model"),
+                                                       b.get("instruction", ""), b.get("base"))})
+            if act == "deck_edit":
+                return self._send(200, {"v": core.edit_deck(slug, b["v"], b["deck"])})
             return self._send(404, {"error": "not found"})
         except core.StudioError as e:
             return self._send(400, {"error": str(e)})
@@ -176,11 +166,11 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8780)
+    ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args()
     core.WORKS.mkdir(parents=True, exist_ok=True)
-    print(f"novel_studio: http://{a.host}:{a.port}  （作品フォルダ {core.WORKS}、モデル {llm.base_url()}、キー{'あり' if llm.find_key() else 'なし'}）", flush=True)
+    print(f"plan_studio: http://{a.host}:{a.port}  （企画フォルダ {core.WORKS}、モデル {llm.base_url()}、キー{'あり' if llm.find_key() else 'なし'}）", flush=True)
     ThreadingHTTPServer((a.host, a.port), H).serve_forever()
 
 
