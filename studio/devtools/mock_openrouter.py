@@ -8,6 +8,8 @@
   <!-- STUDIO: propose|revise|skeleton|classify|draft|draft-revise|deck|deck-revise -->
 環境変数:
   MOCK_LONG=1     提案の summary を上限より長く返す（字数の直しの経路を通すため。直しの依頼には上限内で返す）
+  MOCK_SKELETON_MAX=N   骨格の抜き出しで、1回に N 案より多く頼まれたら失敗する（上流が時間切れで諦めるのを真似る。小分けの経路を通すため）
+  MOCK_FAIL_SKELETON=P03,P05  この案を含む骨格の依頼は必ず失敗する（取れない案が残る経路を通すため）
   MOCK_DELAY=秒   1回の応答を遅らせる（進み具合の表示を見るため）
 OpenCode Go の真似（/zen/go/v1：User-Agent と session の門、/responses・/messages、費用なしの応答）も残してある。
 """
@@ -73,6 +75,9 @@ CORES = [  # 偽モデルでも「収束」を再現する：多くの案が COR
 ]
 
 
+FAIL = "__MOCK_FAIL__"  # 上流のプロバイダが諦めた（504 の代わりに、再試行されない 400 で返す。テストを速くするため）
+
+
 def studio_answer(kind, text, model):
     seed = int(hashlib.md5((model + text[-200:]).encode()).hexdigest()[:8], 16)
     rnd = random.Random(seed)
@@ -101,6 +106,10 @@ def studio_answer(kind, text, model):
         return json.dumps({"proposal": p, "changes": "顧客を絞った（偽モデル）"}, ensure_ascii=False)
     if kind == "skeleton":
         items = re.findall(r'^### (P\d+)\n(.*?)(?=^### P\d+|\Z)', section(text, "提案"), flags=re.S | re.M)
+        cap = int(os.environ.get("MOCK_SKELETON_MAX", "0") or 0)
+        bad = {x for x in os.environ.get("MOCK_FAIL_SKELETON", "").split(",") if x}
+        if (cap and len(items) > cap) or any(pid in bad for pid, _ in items):
+            return FAIL
         out = []
         for pid, body in items:
             c = next((c for c in CORES if c[0] in body), CORES[-1])
@@ -192,6 +201,8 @@ class H(BaseHTTPRequestHandler):
         else:
             out = "OK"
         time.sleep(float(os.environ.get("MOCK_DELAY", "0")))
+        if out == FAIL:
+            return self._json(400, {"error": {"message": "mock: upstream provider gave up (request too large)"}})
         pin, pout = PRICE.get(model.removesuffix(":online"), (1e-6, 2e-6))
         usage = {"prompt_tokens": len(text) // 2, "completion_tokens": len(out) // 2}
         usage["cost"] = round(usage["prompt_tokens"] * pin + usage["completion_tokens"] * pout, 8)

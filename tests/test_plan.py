@@ -232,6 +232,88 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(json.loads(out.stdout)["slug"], "web")
 
 
+class ChunkedClassify(unittest.TestCase):
+    """8案を分析しても上流で落ちないこと：骨格は小分けに頼み、落ちたら1案ずつに分け、取れた分から保存する。選んだ案だけを分析する。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.port = free_port()
+        # 2案以上の依頼は「上流が諦める」。P05 はいつも失敗する
+        cls.mock = start_mock(cls.port, MOCK_SKELETON_MAX="1", MOCK_FAIL_SKELETON="P05")
+        cls.works = tempfile.mkdtemp()
+        cls.core = fresh_core(f"http://127.0.0.1:{cls.port}/api/v1", cls.works)
+        c = cls.core
+        c.create_work("many", THEME)
+        c.propose("many", ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna-pro", "deepseek/deepseek-v4.1-flash", "qwen/qwen3.8-flash"], n=2)
+        assert len(c.load("many")["proposals"]) == 8
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.mock.terminate()
+        cls.mock.wait()
+
+    def skeleton_calls(self):
+        f = Path(self.works) / "many" / "studio" / "usage.jsonl"
+        return [json.loads(x) for x in f.read_text().splitlines() if json.loads(x)["stage"] == "skeleton"]
+
+    def test_1_split_and_keep(self):
+        c = self.core
+        seen = []
+        r = c.classify("many", progress=lambda d, t, w="": seen.append((d, t)))
+        self.assertEqual(r["missing"], ["P05"])
+        self.assertEqual(len(r["ids"]), 7)
+        self.assertNotIn("P05", r["labels"])
+        self.assertTrue(r["errors"]["P05"])
+        calls = self.skeleton_calls()
+        self.assertEqual(len(calls), 7)  # 3案ずつの依頼はすべて落ち、1案ずつで7案取れた（費用は成功した呼び出しだけ）
+        self.assertTrue(all("," not in u["note"] for u in calls))
+        self.assertEqual(seen[-1], (7, 8))
+        self.assertEqual(sorted(c.load("many")["skeletons"]), ["P01", "P02", "P03", "P04", "P06", "P07", "P08"])
+
+    def test_2_selected_only_and_cached(self):
+        c = self.core
+        before = len(self.skeleton_calls())
+        r = c.classify("many", ids=["P01", "P02", "P07"])
+        self.assertEqual(sorted(r["ids"]), ["P01", "P02", "P07"])
+        self.assertEqual(set(r["labels"]), {"P01", "P02", "P07"})
+        self.assertEqual(len(self.skeleton_calls()), before)  # 抜き出し済みの骨格は使い回す（モデルを呼ばない）
+        r2 = c.reclassify("many", 0.3)
+        self.assertEqual(set(r2["labels"]), {"P01", "P02", "P07"})  # しきい値を変えても、分類した案の組はそのまま
+        with self.assertRaises(c.StudioError):
+            c.classify("many", ids=["P01"])
+        with self.assertRaises(c.StudioError):
+            c.classify("many", ids=["P05", "P99"])
+
+    def test_3_ai_reads_skeletons_only(self):
+        c = self.core
+        st = c.load("many")
+        props = [st["proposals"][i] for i in ("P01", "P02")]
+        block = c._skeleton_block(props, c.skeleton_store(st))
+        self.assertNotIn(props[0]["summary"][:30], block)  # 本文は渡さない
+        self.assertIn("one_line", block)
+        r = c.classify("many", ids=["P01", "P02", "P03", "P04"], method="both")
+        self.assertEqual(set(r["ai"]["labels"]), {"P01", "P02", "P03", "P04"})
+
+    def test_4_export(self):
+        c = self.core
+        name, data, ctype = c.export_proposals("many", ["P01", "P03", "P05"], "csv")
+        self.assertTrue(name.endswith("3案.csv"))
+        text = data.decode("utf-8")
+        self.assertTrue(text.startswith("\ufeff案,"))
+        import csv
+        rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+        self.assertEqual(len(rows), 4)
+        self.assertEqual([r[0] for r in rows[1:]], ["P01", "P03", "P05"])
+        name, data, _ = c.export_proposals("many", ["P01", "P03"], "md")
+        md = data.decode()
+        self.assertIn("| P01 |", md)
+        self.assertIn("### 企画の概要", md)
+        obj = json.loads(c.export_proposals("many", [], "json")[1])
+        self.assertEqual(len(obj["proposals"]), 8)  # 何も選ばなければ、外していない案すべて
+        with self.assertRaises(c.StudioError):
+            c.export_proposals("many", ["P01"], "xlsx")
+
+
 class OpenCodeEndToEnd(unittest.TestCase):
     """偽の OpenCode Go（/zen/go/v1）でも、窓口を使い分けて提案から原案まで通ること。"""
 
