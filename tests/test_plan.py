@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.request
 import xml.dom.minidom
 import zipfile
@@ -353,6 +354,138 @@ class CoverAndPlaceholders(unittest.TestCase):
             self.assertIn(x, w)
         w2 = " ".join(self.o.deck_lint(bad, draft, 2, self.core.deck_opts({}))["warnings"])
         self.assertIn("指定：なし", w2)  # 発表日を指定していないのに表紙に日付がある
+
+
+def tiny_pdf(cid=True):
+    """読み取り器の試験用の小さな PDF。cid=True なら日本語の CID フォント（Identity-H＋ToUnicode）、False なら Helvetica。"""
+    import zlib as z
+    if cid:
+        cmap = (b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+                b"2 beginbfchar\n<0001> <8981>\n<0002> <4EF6>\nendbfchar\n1 beginbfrange\n<0010> <0012> <30A2>\nendbfrange\nendcmap end end")
+        content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm <00010002> Tj 1 0 0 1 72 680 Tm [<0010> -20 <00110012>] TJ ET"
+        font = b"<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /Identity-H /ToUnicode 5 0 R >>"
+    else:
+        cmap = b""
+        content = b"BT /F1 12 Tf 72 700 Td (Request For) Tj 0 -20 Td [(Infor) -20 (mation)] TJ T* (\\(RFI\\)) Tj ET"
+        font = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    zc = z.compress(content)
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>", font,
+            b"<< /Length %d >>\nstream\n" % len(cmap) + cmap + b"\nendstream",
+            b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(zc) + zc + b"\nendstream"]
+    out = b"%PDF-1.7\n"
+    for i, o in enumerate(objs, 1):
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    return out + b"trailer << /Root 1 0 R >>\n%%EOF\n"
+
+
+class Requirements(unittest.TestCase):
+    """v0.3.0：テーマを 5W1H で定義し直し、添付の要件書（RFI）を最優先の要件として渡す。"""
+
+    def setUp(self):
+        fresh_core("http://127.0.0.1:9/api/v1", tempfile.mkdtemp())
+        import core
+        import docread
+        self.core, self.dr = core, docread
+
+    def test_theme_text_5w1h(self):
+        c = self.core
+        t = c.theme_text({**THEME, "rfi": "3 情報提供依頼事項 ...", "rfi_name": "rfi.pdf"})
+        order = [t.index(x) for x in ("## What", "① 添付の要件書「rfi.pdf」", "② テーマ・コンセプト・題材", "## How", "誰に（顧客層）",
+                                       "誰が（開発体制・チーム人数）", "いつ（リリース時期）", "差別化のポイント")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("3 情報提供依頼事項", t)  # 本文はテーマではなく、別の資料として渡す
+        plain = c.theme_text(THEME)
+        self.assertNotIn("①", plain)
+        self.assertIn("- テーマ・コンセプト・題材：", plain)
+
+    def test_propose_text_puts_rfi_first(self):
+        c = self.core
+        st = {"theme": {**THEME, "rfi": "3 情報提供依頼事項\n(1) システムの概要", "rfi_name": "rfi.pdf"}}
+        text = c.propose_text(st, 2, "x", [], "y")
+        self.assertLess(text.index("要件①（最優先・必ず守る）"), text.index('<資料 名前="テーマ">'))
+        self.assertIn("(1) システムの概要", text)
+        self.assertIn("要件①の求める事項", text)  # fit の書き方
+        self.assertNotIn("{{", text)
+        plain = c.propose_text({"theme": THEME}, 2, "x", [], "y")
+        self.assertNotIn("要件①（最優先", plain)
+        self.assertNotIn("{{", plain)
+
+    def test_read_text_and_docx(self):
+        r = self.dr.read("rfi.txt", "要件：情報提供依頼".encode("cp932"))
+        self.assertIn("情報提供依頼", r["text"])
+        import outputs
+        docx = outputs.deck_docx({"title": "要件書の題", "slides": [{"title": "見積", "message": "すべての経費"}]}, {"audience": "x", "minutes": 5})
+        r = self.dr.read("rfi.docx", docx)
+        self.assertEqual(r["method"], "docx")
+        self.assertIn("要件書の題", r["text"])
+        self.assertIn("すべての経費", r["text"])
+        with self.assertRaises(self.dr.ReadError):
+            self.dr.read("rfi.xlsx", b"x")
+
+    def test_read_pdf_builtin(self):
+        dr = self.dr
+        pages = dr.MiniPDF(tiny_pdf(True)).pages_text()
+        self.assertEqual(pages, ["要件\nアィイ"])  # bfchar・bfrange（30A2〜30A4）・TJ・行の変わり目
+        pages = dr.MiniPDF(tiny_pdf(False)).pages_text()
+        self.assertEqual(pages, ["Request For\nInformation\n(RFI)"])
+        r = dr.read("x.pdf", tiny_pdf(True))
+        self.assertIn(r["method"], ("builtin", "pdftotext"))
+        self.assertIn("要件", r["text"])
+        self.assertTrue(r["warning"])  # 文字がほとんど無い＝スキャンかもしれない、と知らせる
+
+    def test_end_to_end_with_rfi(self):
+        port = free_port()
+        mock = start_mock(port)
+        try:
+            c = fresh_core(f"http://127.0.0.1:{port}/api/v1", tempfile.mkdtemp())
+            c.create_work("rfi", {**THEME, "rfi": "3 情報提供依頼事項\n(1) システムの概要\n(9) 見積", "rfi_name": "rfi.pdf", "rfi_method": "builtin"})
+            r = c.propose("rfi", ["anthropic/claude-haiku-5.5"], n=2)
+            p = c.load("rfi")["proposals"][r["proposals"][0]]
+            self.assertTrue(p["fit"].startswith("要件①"))
+            c.select("rfi", r["proposals"][0])
+            v = c.make_draft("rfi")
+            d = c.get_draft(c.load("rfi"), v)
+            self.assertTrue(d["draft"]["reqmap"])
+            self.assertFalse(any("要件への対応" in w for w in d["lint"]["warnings"]))
+            v2 = c.edit_draft("rfi", v, {"reqmap": ""})
+            self.assertTrue(any("要件への対応" in w for w in c.get_draft(c.load("rfi"), v2)["lint"]["warnings"]))
+            md = c.export("rfi", "draft_md", v)[1].decode()
+            self.assertIn("## 要件への対応", md)
+            csv_text = c.export_proposals("rfi", [], "csv")[1].decode("utf-8-sig")
+            self.assertIn("要件への適合", csv_text.splitlines()[0])
+        finally:
+            mock.terminate()
+            mock.wait()
+
+    def test_extract_route(self):
+        import base64
+        port = free_port()
+        srv = subprocess.Popen([PY, str(REPO / "studio" / "server.py"), "--port", str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(50):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/api/works", timeout=1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+
+            def post(name, data):
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/api/extract", method="POST", headers={"Content-Type": "application/json"},
+                                             data=json.dumps({"name": name, "data": base64.b64encode(data).decode()}).encode())
+                try:
+                    return 200, json.loads(urllib.request.urlopen(req).read())
+                except urllib.error.HTTPError as e:
+                    return e.code, json.loads(e.read())
+            code, d = post("rfi.pdf", tiny_pdf(True))
+            self.assertEqual(code, 200)
+            self.assertIn("要件", d["text"])
+            self.assertEqual(d["chars"], len(d["text"]))
+            code, d = post("rfi.png", b"\x89PNG")
+            self.assertEqual(code, 400)
+        finally:
+            srv.terminate()
+            srv.wait()
 
 
 class OpenCodeEndToEnd(unittest.TestCase):

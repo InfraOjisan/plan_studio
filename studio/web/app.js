@@ -1,7 +1,7 @@
 /* plan_studio — 画面。サーバーの /api を呼ぶだけで、状態はすべてサーバー（works/<slug>/）にある。 */
 "use strict";
 const STAGES = ["theme", "propose", "classify", "draft", "deck"];
-const FIELDS_JA = { kind: "種類", genre: "ジャンル", title: "企画タイトル", verdict: "判断の一言", summary: "企画の概要",
+const FIELDS_JA = { kind: "種類", genre: "ジャンル・実現手段", title: "企画タイトル", verdict: "判断の一言", summary: "企画の概要", fit: "要件への適合",
   resources: "企画実行に必要なリソース", market: "マーケットの状況・規模", judgment: "判断", sources: "出典" };
 const SK_JA = { customer: "誰の", pain: "何の課題", solution: "解き方", revenue: "儲け方", edge: "勝ち筋", market: "市場の型", one_line: "一行" };
 const TOOL_HOW = {
@@ -206,19 +206,62 @@ function counter(ta) {
 /* ---------------------------------------------------------------- 一 テーマ（#7） */
 function themeForm(t = {}) {
   const v = (k, d = "") => h(t[k] ?? d);
-  return `<div class="form">
-    <label class="f">ジャンル<input type="text" name="genre" list="genres" value="${v("genre")}" placeholder="ITサービス／人系サービス／物販／統合ソリューション…"></label>
-    <datalist id="genres"><option>ITサービス</option><option>人系サービス</option><option>物販</option><option>統合ソリューション</option><option>BPO・代行</option><option>ハード＋保守</option></datalist>
-    <label class="f">顧客層（マーケットとなる顧客）<input type="text" name="customer" value="${v("customer")}" placeholder="例：中小製造業の経理、自治体の窓口"></label>
-    <label class="f wide">テーマ・コンセプト・題材<textarea name="theme" placeholder="そのままサービスのイメージ。例：コストダウン、監査、セキュリティ">${v("theme")}</textarea></label>
-    <label class="f">開発規模：チーム人数<input type="text" name="team" value="${v("team")}" placeholder="例：5名（PM1・開発3・営業1）"></label>
-    <label class="f">開発規模：リリース期間<input type="text" name="period" value="${v("period")}" placeholder="例：6か月で最初の版"></label>
-    <label class="f wide">必ず入れたいこと<textarea name="must">${v("must")}</textarea></label>
-    <label class="f wide">入れたくないこと<textarea name="must_not">${v("must_not")}</textarea></label>
-    <label class="f wide">その他・マーケット情報など調査事項<textarea name="research" placeholder="例：競合があれば調査、海外と国内の市場差">${v("research")}</textarea></label>
-    <label class="f wide">自社の前提（任意）<textarea name="company" placeholder="強み・既存顧客・使える技術・避けたい領域。原案の『当社の必要リソース』と『なぜ自社か』に効きます">${v("company")}</textarea></label>
-    <label class="f">目標の規模感（任意）<input type="text" name="goal" value="${v("goal")}" placeholder="例：3年で年商5億、粗利40%"></label>
+  const rfiN = len(t.rfi || "");
+  return `<div class="theme-form">
+    <fieldset class="tf"><legend>What：要件（必ず守る。①→②の順に優先）</legend>
+      <div class="form">
+        <div class="f wide rfi">
+          <span>① 添付の要件書（RFI・RFP・仕様書など。あれば最優先）</span>
+          <div class="row"><input type="file" id="rfiFile" accept=".pdf,.docx,.txt,.md"><span class="muted" id="rfiInfo">${t.rfi_name ? `「${h(t.rfi_name)}」${rfiN.toLocaleString()} 字（${h(t.rfi_method || "")}）` : "PDF・Word（.docx）・テキストから文字を取り出して下に入れます。読み取りを確かめて、必要なら直してください。"}</span></div>
+          <textarea name="rfi" id="rfiText" rows="${rfiN ? 10 : 3}" placeholder="要件書がなければ空のまま。本文を貼り付けてもかまいません">${v("rfi")}</textarea>
+          <input type="hidden" name="rfi_name" id="rfiName" value="${v("rfi_name")}"><input type="hidden" name="rfi_method" id="rfiMethod" value="${v("rfi_method")}">
+        </div>
+        <label class="f wide">② テーマ・コンセプト・題材<textarea name="theme" placeholder="そのままサービスのイメージ。例：コストダウン、監査、セキュリティ">${v("theme")}</textarea></label>
+      </div></fieldset>
+    <fieldset class="tf"><legend>How：実現手段</legend>
+      <div class="form">
+        <label class="f">ジャンル（要件を満たす手段。要件そのものではない）<input type="text" name="genre" list="genres" value="${v("genre")}" placeholder="ITサービス／人系サービス／物販／統合ソリューション…"></label>
+        <datalist id="genres"><option>ITサービス</option><option>人系サービス</option><option>物販</option><option>統合ソリューション</option><option>BPO・代行</option><option>ハード＋保守</option></datalist>
+      </div></fieldset>
+    <fieldset class="tf"><legend>誰に・誰が・いつ</legend>
+      <div class="form">
+        <label class="f">誰に（顧客層）<input type="text" name="customer" value="${v("customer")}" placeholder="例：中小製造業の経理、自治体の窓口"></label>
+        <label class="f">誰が（チーム人数）<input type="text" name="team" value="${v("team")}" placeholder="例：5名（PM1・開発3・営業1）"></label>
+        <label class="f">いつ（リリース時期）<input type="text" name="period" value="${v("period")}" placeholder="例：6か月で最初の版"></label>
+      </div></fieldset>
+    <fieldset class="tf"><legend>特色と割り切り</legend>
+      <div class="form">
+        <label class="f wide">必ず入れたいこと（要件以外で特色を出すポイント）<textarea name="must" placeholder="例：職員が自分でワークフローを直せる、監査ログを標準で残す">${v("must")}</textarea></label>
+        <label class="f wide">入れたくないこと（競っても無駄・考える必要がないこと）<textarea name="must_not" placeholder="例：大手と同じ汎用チャットの機能競争、自前の大規模言語モデル">${v("must_not")}</textarea></label>
+      </div></fieldset>
+    <fieldset class="tf"><legend>そのほか（任意）</legend>
+      <div class="form">
+        <label class="f wide">調べてほしいこと（競合・海外と国内の市場差など）<textarea name="research" placeholder="例：競合があれば調査、海外と国内の市場差">${v("research")}</textarea></label>
+        <label class="f wide">自社の前提<textarea name="company" placeholder="強み・既存顧客・使える技術・避けたい領域。原案の『当社の必要リソース』と『なぜ自社か』に効きます">${v("company")}</textarea></label>
+        <label class="f">目標の規模感<input type="text" name="goal" value="${v("goal")}" placeholder="例：3年で年商5億、粗利40%"></label>
+      </div></fieldset>
   </div>`;
+}
+
+function bindThemeForm(root) {  // 要件書のファイルを読み、文字を取り出して欄に入れる（サーバーでは保存しない）
+  const f = $("#rfiFile", root);
+  if (!f) return;
+  const ta = $("#rfiText", root), info = $("#rfiInfo", root);
+  const show = () => { if (!$("#rfiName", root).value && ta.value.trim()) info.textContent = `貼り付けた本文 ${len(ta.value).toLocaleString()} 字`; };
+  ta.addEventListener("input", show);
+  f.onchange = () => guard(async () => {
+    const file = f.files[0];
+    if (!file) return;
+    info.textContent = `「${file.name}」を読んでいます…`;
+    const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(file); });
+    let d;
+    try { d = await api("POST", "/api/extract", { name: file.name, data }); }
+    catch (e) { info.textContent = e.message; throw e; }
+    ta.value = d.text; ta.rows = 12;
+    $("#rfiName", root).value = file.name; $("#rfiMethod", root).value = d.method;
+    info.textContent = `「${file.name}」${d.chars.toLocaleString()} 字（${d.method === "pdftotext" ? "pdftotext" : d.method === "builtin" ? "内蔵の読み取り" : d.method}${d.pages ? `・${d.pages}ページ` : ""}）。読み取りを確かめて、必要なら直してください。` + (d.warning ? `　⚠ ${d.warning}` : "");
+    info.classList.toggle("warn", !!d.warning);
+  });
 }
 
 function readThemeForm(root) {
@@ -234,6 +277,7 @@ function renderTheme() {
       <label class="f" style="max-width:320px">企画フォルダの名前（英数字・-・_）<input type="text" name="slug" id="slugIn" placeholder="audit-saas"></label>
       <h2>テーマ</h2>${themeForm()}
       <div class="row"><button class="act" id="createBtn" type="button">企画を作って、提案へ進む</button></div>`;
+    bindThemeForm(el);
     $("#createBtn").onclick = () => guard(async () => {
       const slug = $("#slugIn").value.trim();
       const d = await api("POST", "/api/works", { slug, theme: readThemeForm(el) });
@@ -259,17 +303,18 @@ function renderTheme() {
       <span class="muted">いまの素案・分類・原案・たたきは企画フォルダの studio/history/ に退避されます。</span></div>
     </details>`;
   el.querySelectorAll("[data-goto]").forEach((a) => a.onclick = (ev) => { ev.preventDefault(); gotoWork(a.dataset.goto); });
+  bindThemeForm(el);
   $("#deriveBtn").onclick = () => guard(async () => {
     const ns = $("#newSlug").value.trim();
     if (!ns) { toast("新しい企画フォルダの名前を入れてください"); $("#newSlug").focus(); return; }
     if (ns === S.slug) { toast("いまの企画とは別の名前にしてください"); $("#newSlug").focus(); return; }
-    const d = await api("POST", `/api/works/${S.slug}/derive`, { new_slug: ns, theme: readThemeForm(el.querySelector(".form")) });
+    const d = await api("POST", `/api/works/${S.slug}/derive`, { new_slug: ns, theme: readThemeForm(el.querySelector(".theme-form")) });
     S.slug = d.slug; S.view = "propose"; S.draftV = null; S.deckV = null; S.pick = new Set(); localStore("slug", S.slug);
     await loadWorks(S.slug); await refresh(); toast(`新しい企画 ${d.slug} を作りました。提案を頼んでください。`);
   });
   $("#retheme").onclick = () => guard(async () => {
     if (!confirm("テーマを変えると、この企画は提案からやり直しになります。よろしいですか。")) return;
-    await api("POST", `/api/works/${S.slug}/theme`, { theme: readThemeForm(el.querySelector(".form")) });
+    await api("POST", `/api/works/${S.slug}/theme`, { theme: readThemeForm(el.querySelector(".theme-form")) });
     S.view = "propose"; await refresh(); toast("テーマを変えました。提案からやり直します。");
   });
 }
@@ -294,6 +339,7 @@ function sheet(p, opts = {}) {
     <h3>${h(p.title)}</h3>
     ${p.verdict ? `<p class="verdict">${h(p.verdict)}</p>` : ""}
     <p class="syn">${h(p.summary)}</p>
+    ${p.fit ? `<p class="fit"><b>要件への適合</b>${h(p.fit)}</p>` : ""}
     <dl>${dl}</dl>
     ${opts.noActs ? "" : `<div class="acts">
       <button class="ghost small" data-a="open" type="button">全文</button>
@@ -580,6 +626,7 @@ function draftMd(d) {
   const secs = S.snap.sections;
   let s = `# ${d.title || "（無題）"}\n` + (d.catch ? `\n> ${d.catch}\n` : "");
   for (const x of secs) s += `\n## ${x.label}\n\n${d[x.key] || ""}\n`;
+  if ((d.reqmap || []).length) s += `\n## 要件への対応（要件①の求める事項ごと）\n\n` + d.reqmap.map((c) => `- ${c}`).join("\n") + "\n";
   if ((d.checks || []).length) s += `\n## 要確認事項（推定・仮定・未調査）\n\n` + d.checks.map((c) => `- ${c}`).join("\n") + "\n";
   return s;
 }
@@ -636,6 +683,7 @@ function renderDraft() {
       <label class="f">企画名<input type="text" name="title" value="${h(d.title)}"></label>
       <label class="f">キャッチ<input type="text" name="catch" value="${h(d.catch)}"></label>
       ${snap.sections.map((x) => `<label class="f">${h(x.label)}<textarea name="${x.key}" rows="${Math.max(6, Math.round(x.target / 120))}" data-max="${x.target}" data-soft="1">${h(d[x.key])}</textarea></label>`).join("")}
+      ${snap.theme && snap.theme.rfi ? `<label class="f">要件への対応（要件①の求める事項ごとに1行。どの節で・どう応えるか）<textarea name="reqmap" rows="6">${h((d.reqmap || []).join("\n"))}</textarea></label>` : ""}
       <label class="f">要確認事項（1行に1つ）<textarea name="checks" rows="5">${h((d.checks || []).join("\n"))}</textarea></label></div>
       <div class="row"><button class="act" id="dSave" type="button">新しい版として保存</button><span class="muted">保存すると機械検査が走ります。</span></div>`;
     $("#dBody").querySelectorAll("textarea[data-max]").forEach((ta) => counter(ta));

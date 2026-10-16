@@ -5,7 +5,7 @@
 画面（server.py）と同じ core.py を呼ぶので、画面とハーネスを混ぜて使ってよい（同じ works/<slug>/studio.json を読む）。
 
   python3 studio/cli.py works
-  python3 studio/cli.py new <slug> --theme theme.json
+  python3 studio/cli.py new <slug> --theme theme.json [--rfi 要件書.pdf|.docx|.txt]   要件書を添付する（What の①。最優先）
   python3 studio/cli.py show <slug> [--brief]                  状態の要約（--brief で素案の本文を省く）
   python3 studio/cli.py theme <slug> --theme theme.json         テーマを変えて最初から（記録は studio/history/ に退避）
   python3 studio/cli.py derive <slug> <new-slug> [--theme theme.json]  テーマを直して、新しい企画フォルダで提案し直す
@@ -94,6 +94,7 @@ def main(argv):
     ap.add_argument("--out")
     ap.add_argument("--brief", action="store_true")
     ap.add_argument("--ids", default="")
+    ap.add_argument("--rfi")
     ap.add_argument("--fmt", default="md")
     a = ap.parse_args(argv)
     A = a.args
@@ -101,7 +102,14 @@ def main(argv):
         if a.cmd == "works":
             return out({"works": core.list_works()})
         if a.cmd == "new":
-            core.create_work(A[0], rd_json(a.theme) if a.theme else {})
+            theme = rd_json(a.theme) if a.theme else {}
+            if a.rfi:
+                import docread
+                r = docread.read(a.rfi, Path(a.rfi).read_bytes())
+                theme.update({"rfi": r["text"], "rfi_name": Path(a.rfi).name, "rfi_method": r["method"]})
+                if r["warning"]:
+                    print(r["warning"], file=sys.stderr)
+            core.create_work(A[0], theme)
             return out(summary(core.load(A[0])))
         if a.cmd == "show":
             return out(summary(core.load(A[0]), short=a.brief))

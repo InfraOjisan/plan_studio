@@ -25,6 +25,9 @@ def draft_markdown(d, sections, meta=None):
         out.append("\n" + "\n".join(f"- {k}：{v}" for k, v in meta.items()))
     for k, label, _ in sections:
         out.append(f"\n## {label}\n\n{str(d.get(k) or '').strip()}")
+    req = [x for x in (d.get("reqmap") or []) if str(x).strip()]
+    if req:
+        out.append("\n## 要件への対応（要件①の求める事項ごと）\n\n" + "\n".join(f"- {c}" for c in req))
     checks = d.get("checks") or []
     if checks:
         out.append("\n## 要確認事項（推定・仮定・未調査）\n\n" + "\n".join(f"- {c}" for c in checks))

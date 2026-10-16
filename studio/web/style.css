@@ -247,3 +247,16 @@ dialog.wide { width: min(980px, 96vw); }
   .actionbar { margin: 20px -16px -60px; padding: 10px 16px 12px; grid-template-columns: 1fr; }
   .actionbar .ab-acts { justify-content: flex-start; }
 }
+
+/* テーマ：5W1H のまとまり（v0.3.0） */
+.theme-form { display: grid; gap: 14px; max-width: 1000px; }
+fieldset.tf { border: 1px solid var(--rule); background: var(--sheet); padding: 6px 16px 14px; margin: 0; }
+fieldset.tf legend { font-family: var(--mincho); font-size: 15px; padding: 0 6px; color: var(--indigo); }
+.f.rfi { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.f.rfi .row { margin: 2px 0; }
+.f.rfi textarea { font-size: 13px; }
+#rfiInfo.warn { color: var(--shu); }
+.sheet .fit { margin: 8px 0 0; font-size: 13px; line-height: 1.6; border-left: 3px solid var(--moss); padding: 2px 0 2px 8px;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.sheet.open .fit { display: block; }
+.sheet .fit b { display: block; font-size: 11.5px; color: var(--moss); font-weight: 600; }

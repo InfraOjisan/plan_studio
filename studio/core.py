@@ -114,26 +114,79 @@ def prompt(name, **kw):
     return t
 
 
-# ---------------------------------------------------------------- 一 テーマ（Issue #7）
+# ---------------------------------------------------------------- 一 テーマ（Issue #7。v0.3.0 で 5W1H に定義し直した）
+# What（要件。必ず守る）＝ ①添付の要件書（RFI など：theme["rfi"]）→ ②テーマ・コンセプト・題材 の順に優先する。
+# How＝ジャンル（実現手段）。誰に＝顧客層、誰が＝チーム人数、いつ＝リリース時期。
+# 必ず入れたいこと＝要件以外で特色を出すところ。入れたくないこと＝競っても無駄・考えなくてよいこと。
 THEME_FIELDS = {"genre": "ジャンル", "customer": "顧客層", "theme": "テーマ・コンセプト・題材",
                 "team": "開発規模（チーム人数）", "period": "開発規模（リリースまでの期間）",
                 "must": "必ず入れたいこと", "must_not": "入れたくないこと",
                 "research": "その他・マーケット情報など調査事項",
                 "company": "自社の前提（強み・既存顧客・使える技術・避けたい領域）", "goal": "目標の規模感"}
 THEME_DEFAULTS = {}
-THEME_LABELS = dict(THEME_FIELDS)
+THEME_LABELS = {**THEME_FIELDS, "rfi": "添付の要件書（RFI など）"}
+RFI_MAX = 80000  # 要件書の文字数の上限（すべてのモデルに毎回渡すので）
+THEME_GROUPS = [  # (見出し, [(欄, 依頼文での名前)])
+    ("What（要件。必ず守る。①→②の順に優先し、食い違ったら①に従う）",
+     [("theme", "② テーマ・コンセプト・題材")]),
+    ("How（実現手段。要件を満たすための手段で、要件そのものではない）", [("genre", "ジャンル・実現手段")]),
+    ("誰に・誰が・いつ", [("customer", "誰に（顧客層）"), ("team", "誰が（開発体制・チーム人数）"), ("period", "いつ（リリース時期）")]),
+    ("特色と割り切り", [("must", "差別化のポイント（要件以外で特色を出すところ。必ず入れる）"),
+                     ("must_not", "競わない・考えなくてよいこと（ここに力を割かない。案に入れない）")]),
+    ("そのほか", [("research", "調べてほしいこと（競合・国内外の市場差など）"), ("company", "自社の前提（強み・既存顧客・使える技術・避けたい領域）"),
+              ("goal", "目標の規模感")]),
+]
 
 
 def theme_text(theme):
-    lines = [f"- {label}：{theme[k]}" for k, label in THEME_FIELDS.items() if str(theme.get(k, "")).strip()]
-    return "\n".join(lines) or "- （指定なし。自由に）"
+    """依頼文に入れるテーマ（5W1H の順）。要件書の本文は rfi_block で別の資料として渡す。"""
+    out = []
+    rfi = has_rfi(theme)
+    for head, items in THEME_GROUPS:
+        lines = [f"- {label}：{theme[k]}" for k, label in items if str(theme.get(k, "")).strip()]
+        if head.startswith("What"):
+            if rfi:
+                lines.insert(0, f"- ① 添付の要件書「{theme.get('rfi_name') or '要件書'}」：別の資料「要件①」の全文（最優先）")
+            else:  # 要件書がないときは、順番の話をしない
+                head = "What（要件。必ず守る）"
+                lines = [ln.replace("- ② ", "- ") for ln in lines]
+            if not lines:
+                lines = ["- （要件の指定なし。テーマの他の欄から自由に）"]
+        if lines:
+            out.append(f"## {head}\n" + "\n".join(lines))
+    return "\n\n".join(out) or "- （指定なし。自由に）"
+
+
+def rfi_block(theme):
+    """添付の要件書の本文（あれば）。依頼文のテーマより前に置く。"""
+    t = str((theme or {}).get("rfi", "")).strip()
+    if not t:
+        return ""
+    return (f"\n<資料 名前=\"要件①（最優先・必ず守る）：添付の要件書「{theme.get('rfi_name') or '要件書'}」\">\n{t[:RFI_MAX]}\n</資料>\n")
+
+
+def has_rfi(theme):
+    return bool(str((theme or {}).get("rfi", "")).strip())
+
+
+def theme_kw(theme):
+    return {"THEME": theme_text(theme), "RFI": rfi_block(theme)}
+
+
+def clean_theme(theme):
+    """画面・CLI から来たテーマを整える（要件書は長さを切り、取り出し方を残す）。"""
+    t = {k: (str(v).strip() if isinstance(v, str) else v) for k, v in (theme or {}).items()}
+    if t.get("rfi"):
+        t["rfi"] = str(t["rfi"])[:RFI_MAX]
+    return t
 
 
 def theme_title(theme):
-    return (theme.get("theme") or theme.get("genre") or "")[:40]
+    return (theme.get("theme") or theme.get("rfi_name") or theme.get("genre") or "")[:40]
 
 
 def create_work(slug, theme):
+    theme = clean_theme(theme)
     d = wdir(slug)
     if (d / "studio.json").exists():
         raise StudioError(f"企画 {slug} はすでにあります")
@@ -182,7 +235,7 @@ def derive_work(src, new_slug, theme):
     if wdir(new_slug).exists():
         raise StudioError(f"企画フォルダ「{new_slug}」はもうあります。別の名前にしてください（候補：{suggest_slug(new_slug)}）")
     st = create_work(new_slug, theme)
-    changed = theme_diff(s["theme"], theme)
+    changed = theme_diff(s["theme"], clean_theme(theme))
     st["derived_from"] = {"slug": src, "theme_version": s["theme_version"], "at": now(), "changed": changed}
     st["log"].append(f"{now()} 《{src}》のテーマ（版{s['theme_version']}）を直して作成。変えた欄：{'・'.join(changed) or 'なし（同じテーマで出し直し）'}")
     save(new_slug, st)
@@ -211,7 +264,7 @@ def change_theme(slug, theme):
         h = wdir(slug) / "studio" / "history"
         h.mkdir(parents=True, exist_ok=True)
         (h / f"theme_v{st['theme_version']}.json").write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
-        st.update({"theme": theme, "theme_version": st["theme_version"] + 1, "rounds": [], "proposals": {}, "classify": None,
+        st.update({"theme": clean_theme(theme), "theme_version": st["theme_version"] + 1, "rounds": [], "proposals": {}, "classify": None,
                    "selected": None, "drafts": [], "decks": []})
         st["log"].append(f"{now()} テーマを変更（v{st['theme_version']}）。前のテーマの記録は studio/history/")
         save(slug, st)
@@ -219,9 +272,9 @@ def change_theme(slug, theme):
 
 
 # ---------------------------------------------------------------- 二 提案（Issue #8）
-PROPOSAL_FIELDS = ["kind", "genre", "title", "verdict", "summary", "resources", "market", "judgment", "sources"]
+PROPOSAL_FIELDS = ["kind", "genre", "title", "verdict", "summary", "fit", "resources", "market", "judgment", "sources"]
 # 字数の上限（Issue #8）。verdict（判断の一言）は一覧で見比べるために足した
-LIMITS = {"title": 50, "verdict": 30, "summary": 1000, "resources": 500, "market": 500, "judgment": 500}
+LIMITS = {"title": 50, "verdict": 30, "summary": 1000, "fit": 500, "resources": 500, "market": 500, "judgment": 500}
 SLACK = 1.15  # この倍率までは許す（日本語の字数はモデルが数え違えやすい）
 
 
@@ -241,9 +294,15 @@ def _check_props(obj, n):
     return None
 
 
-def _soft_props(obj):
+def _soft_props(obj, need_fit=False):
     bad = [f"{i + 1}件目の " + "、".join(o) for i, p in enumerate(obj["proposals"]) if (o := over_limits(p))]
-    return "字数の上限を超えています：" + "；".join(bad) + "。内容を削らず、言い回しを詰めて上限に収めてください" if bad else None
+    msg = []
+    if bad:
+        msg.append("字数の上限を超えています：" + "；".join(bad) + "。内容を削らず、言い回しを詰めて上限に収めてください")
+    nofit = [str(i + 1) for i, p in enumerate(obj["proposals"]) if need_fit and not str(p.get("fit", "")).strip()]
+    if nofit:
+        msg.append(f"{'・'.join(nofit)}件目に fit（要件への適合）がありません。要件①の求める事項ごとに、満たす／一部／満たさないを書いてください")
+    return "。".join(msg) or None
 
 
 def _call_json(slug, stage, model, text, check, temperature=0.7, note="", reasoning=None, max_tokens=16000, soft=None):
@@ -300,13 +359,14 @@ def propose(slug, models, n=2, instruction="", mode="new", temperature=0.8, avoi
     web_rule = ("- Web 検索が使えます。競合・市場規模・国内と海外の差は、検索して確かめた事実を使い、sources に URL を書いてください。"
                 if web and "openrouter.ai" in llm.base_url() else
                 "- Web 検索は使えません。市場の数字や競合は、確かな知識だけを書き、確かでないものは「推定」と書いて推定の筋道を一言添えてください。")
-    text = prompt("propose", THEME=theme_text(st["theme"]), N=n, KIND_RULE=kind_rule, EXTRA="\n".join(extra), WEB_RULE=web_rule)
+    text = propose_text(st, n, kind_rule, extra, web_rule)
     rid = f"r{len(st['rounds']) + 1}"
     results, errors = {}, {}
     calls = {m: web_model(m, web) for m in models}
 
     def one(m):
-        obj, rec = _call_json(slug, "propose", calls[m], text, lambda o: _check_props(o, n), temperature=temperature, note=rid, soft=_soft_props)
+        obj, rec = _call_json(slug, "propose", calls[m], text, lambda o: _check_props(o, n), temperature=temperature, note=rid,
+                              soft=lambda o: _soft_props(o, has_rfi(st["theme"])))
         return obj["proposals"][:n], rec
     with cf.ThreadPoolExecutor(max_workers=min(8, len(models) or 1)) as ex:
         futs = {ex.submit(one, m): m for m in models}
@@ -336,6 +396,12 @@ def propose(slug, models, n=2, instruction="", mode="new", temperature=0.8, avoi
         st["log"].append(f"{now()} 提案 {rid}（{mode}{'・Web検索' if web else ''}）：{len(pids)}案、失敗 {len(errors)}モデル")
         save(slug, st)
     return {"round": rid, "proposals": pids, "errors": errors}
+
+
+def propose_text(st, n, kind_rule, extra, web_rule):
+    fit_rule = ("- fit（要件への適合）：要件①の求める事項（章・項目番号で）それぞれに、この案が「満たす／一部／満たさない」と、その理由を短く。満たさない事項を隠さない。"
+                if has_rfi(st["theme"]) else "- fit（要件への適合）：What の要件をこの案がどう満たすか（満たさない点があれば書く）。")
+    return prompt("propose", **theme_kw(st["theme"]), N=n, KIND_RULE=kind_rule, EXTRA="\n".join(extra), WEB_RULE=web_rule, FIT_RULE=fit_rule)
 
 
 def _flat(v):
@@ -379,7 +445,7 @@ def revise_proposal(slug, pid, model, instruction):
     if not src:
         raise StudioError(f"{pid} がありません")
     body = json.dumps({f: src.get(f, "") for f in PROPOSAL_FIELDS}, ensure_ascii=False, indent=1)
-    text = prompt("revise", THEME=theme_text(st["theme"]), PROPOSAL=body, INSTRUCTION=instruction)
+    text = prompt("revise", **theme_kw(st["theme"]), PROPOSAL=body, INSTRUCTION=instruction)
 
     def chk(o):
         return None if isinstance(o, dict) and isinstance(o.get("proposal"), dict) and o["proposal"].get("summary") else "proposal がない"
@@ -594,8 +660,9 @@ DRAFT_SECTIONS = [  # (key, 見出し, 目安の字数)
 ]
 
 
-def draft_lint(d):
-    """原案の機械検査。errors は欠け（直させる）、warnings は字数の偏りなど（人に見せる）。"""
+def draft_lint(d, rfi=False):
+    """原案の機械検査。errors は欠け（直させる）、warnings は字数の偏りなど（人に見せる）。
+    rfi：要件書が添付されている。そのときは「要件への対応」（reqmap）が空なら警告する。"""
     errors, warnings = [], []
     if not isinstance(d, dict):
         return {"ok": False, "errors": ["draft がオブジェクトではありません"], "warnings": [], "chars": {}}
@@ -614,6 +681,8 @@ def draft_lint(d):
     checks = d.get("checks")
     if not isinstance(checks, list) or not checks:
         warnings.append("要確認事項（推定の数字・仮定・未調査の点）が空です。数字を書いたなら、確かめ方も残してください")
+    if rfi and not [x for x in (d.get("reqmap") or []) if str(x).strip()]:
+        warnings.append("要件への対応（要件①の求める事項ごとに、どの節でどう応えたか）が空です。要件書の漏れを確かめられません")
     return {"ok": not errors, "errors": errors, "warnings": warnings, "chars": chars}
 
 
@@ -637,7 +706,7 @@ def make_draft(slug, model=None, instruction="", base_version=None, borrow=None)
         base = next((x for x in st["drafts"] if x["v"] == int(base_version)), None)
         if not base:
             raise StudioError(f"原案 v{base_version} がありません")
-        text = prompt("draft_revise", THEME=theme_text(st["theme"]), DRAFT=json.dumps(base["draft"], ensure_ascii=False, indent=1),
+        text = prompt("draft_revise", **theme_kw(st["theme"]), DRAFT=json.dumps(base["draft"], ensure_ascii=False, indent=1),
                       INSTRUCTION=instruction or "機械検査の指摘を直す", SECTIONS=secs,
                       LINT="\n".join(f"- {e}" for e in base["lint"]["errors"] + base["lint"]["warnings"]) or "- なし")
         pid, borrow, stage = base["from"], base.get("borrow", []), "draft-revise"
@@ -648,7 +717,7 @@ def make_draft(slug, model=None, instruction="", base_version=None, borrow=None)
         borrow = [b for b in (borrow or []) if b in st["proposals"] and b != pid]
         bb = "".join(f"\n<資料 名前=\"取り込みたい要素がある案 {b}\">\n{_proposal_json(st['proposals'][b])}\n</資料>\n" for b in borrow)
         ib = f"\n<資料 名前=\"企画責任者の追加の指示\">\n{instruction}\n</資料>\n" if instruction.strip() else ""
-        text = prompt("draft", THEME=theme_text(st["theme"]), PROPOSAL=_proposal_json(st["proposals"][pid]),
+        text = prompt("draft", **theme_kw(st["theme"]), PROPOSAL=_proposal_json(st["proposals"][pid]),
                       BORROW_BLOCK=bb, INSTRUCTION_BLOCK=ib, SECTIONS=secs)
         stage = "draft"
     obj, rec = _call_json(slug, stage, model, text, _draft_check, temperature=0.5, max_tokens=32000, reasoning="medium")
@@ -660,7 +729,8 @@ def _add_draft(slug, d, pid, model, instruction, usd, base_version=None, changes
         st = load(slug)
         v = max([x["v"] for x in st["drafts"]] or [0]) + 1
         st["drafts"].append({"v": v, "ts": now(), "from": pid, "borrow": borrow or [], "model": model, "instruction": instruction,
-                             "base": base_version, "usd": usd, "origin": origin, "changes": changes, "draft": d, "lint": draft_lint(d)})
+                             "base": base_version, "usd": usd, "origin": origin, "changes": changes, "draft": d,
+                             "lint": draft_lint(d, has_rfi(st["theme"]))})
         st["log"].append(f"{now()} 原案 v{v}（{origin}{'、v' + str(base_version) + ' から' if base_version else ''}）")
         save(slug, st)
     return v
@@ -674,8 +744,8 @@ def edit_draft(slug, v, fields):
         raise StudioError(f"原案 v{v} がありません")
     d = dict(base["draft"])
     for k, val in (fields or {}).items():
-        if k == "checks":
-            d["checks"] = [x.strip() for x in (val if isinstance(val, list) else str(val).splitlines()) if str(x).strip()]
+        if k in ("checks", "reqmap"):
+            d[k] = [x.strip() for x in (val if isinstance(val, list) else str(val).splitlines()) if str(x).strip()]
         elif k in ("title", "catch") or k in dict((s[0], 1) for s in DRAFT_SECTIONS):
             d[k] = str(val)
     return _add_draft(slug, d, base["from"], "human", "人が編集", 0.0, int(v), origin="human", borrow=base.get("borrow"))
@@ -832,7 +902,7 @@ def export_proposals(slug, ids, fmt="md"):
         import csv
         import io
         heads = {"id": "案", "round": "ラウンド", "model": "モデル", "origin": "出どころ", "parent": "元の案", "kind": "種類", "genre": "ジャンル",
-                 "title": "企画タイトル", "verdict": "判断の一言", "summary": "企画の概要", "resources": "必要なリソース", "market": "マーケット",
+                 "title": "企画タイトル", "verdict": "判断の一言", "summary": "企画の概要", "fit": "要件への適合", "resources": "必要なリソース", "market": "マーケット",
                  "judgment": "判断", "sources": "出典", "label": "分類", "nearest": "いちばん近い案", "sim": "近さ", "ai_label": "AIの分類",
                  "ai_reason": "AIの理由", "sk_customer": "骨格：誰の", "sk_pain": "骨格：課題", "sk_solution": "骨格：解き方",
                  "sk_revenue": "骨格：儲け方", "sk_edge": "骨格：勝ち筋", "sk_market": "骨格：市場の型", "sk_one_line": "骨格：一行",
@@ -857,7 +927,7 @@ def export_proposals(slug, ids, fmt="md"):
             out.append("- 骨格：" + "／".join(f"{v}" for v in (r[f"sk_{k}"] for k in similarity.SK_FIELDS) if v) + f"（{r['sk_one_line']}）")
         if r["over"]:
             out.append(f"- 字数超過：{r['over']}")
-        for f, label in (("summary", "企画の概要"), ("resources", "企画実行に必要なリソース"), ("market", "マーケットの状況、規模"),
+        for f, label in (("summary", "企画の概要"), ("fit", "要件への適合"), ("resources", "企画実行に必要なリソース"), ("market", "マーケットの状況、規模"),
                          ("judgment", "判断"), ("sources", "出典")):
             if r[f]:
                 out += ["", f"### {label}", "", str(r[f]).strip()]
@@ -893,7 +963,7 @@ def snapshot(slug):
            "sections": [{"key": k, "label": label, "target": t} for k, label, t in DRAFT_SECTIONS],
            "limits": LIMITS, "purposes": DECK_PURPOSES, "web_ok": "openrouter.ai" in llm.base_url()}
     for d in out["drafts"]:
-        d["lint"] = draft_lint(d["draft"])
+        d["lint"] = draft_lint(d["draft"], has_rfi(st["theme"]))
     for k in out["decks"]:
         try:
             k["lint"] = outputs.deck_lint(k["deck"], get_draft(st, k["draft_v"])["draft"], k["opts"]["slides"], k["opts"])

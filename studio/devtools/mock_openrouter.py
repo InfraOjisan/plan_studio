@@ -96,6 +96,7 @@ def studio_answer(kind, text, model):
                           "resources": "開発5名・6か月。初期費用は推定3,000万円（人件費×期間）。",
                           "market": f"{c[0]}は国内に推定12,000社。単価月額5万円で年72億円（推定：社数×単価×12）。",
                           "judgment": "いまは国内に専業が少なくブルー。3年後は大手の参入でレッドに近づく。",
+                          "fit": "要件①の3(1)ア：満たす。3(9)見積：一部（推定）。" if "要件①" in text else "",
                           "sources": ""})
         return json.dumps({"proposals": props}, ensure_ascii=False)
     if kind == "revise":
@@ -126,6 +127,7 @@ def studio_answer(kind, text, model):
         for k, t in targets.items():
             d[k] = f"{k}の本文（偽モデル）。国内に推定12,000社、月額5万円。" + prose(int(t * 0.9), seed + len(k))
         d["checks"] = ["国内12,000社：業界団体の統計で確かめる", "月額5万円：既存顧客10社に聞く"]
+        d["reqmap"] = ["3(1) システムの概要 → overview・design で応える", "3(9) 見積 → resources で応える"] if "要件①" in text else []
         if kind == "draft-revise":
             d["catch"] += "（指示を反映）"
         return json.dumps({"draft": d, "changes": "偽モデルの変更"}, ensure_ascii=False)

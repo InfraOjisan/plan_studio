@@ -23,7 +23,10 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import base64
+
 import core
+import docread
 import llm
 import outputs
 
@@ -125,6 +128,15 @@ class H(BaseHTTPRequestHandler):
         parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
         try:
             b = self._body()
+            if parts[:2] == ["api", "extract"]:  # 添付の要件書（PDF・Word・テキスト）から文字を取り出す。保存はしない
+                try:
+                    r = docread.read(b.get("name", ""), base64.b64decode(b.get("data", "")))
+                except docread.ReadError as e:
+                    return self._send(400, {"error": str(e)})
+                r["chars"] = len(r["text"])
+                if r["chars"] > core.RFI_MAX:
+                    r["warning"] = (r["warning"] + " " if r["warning"] else "") + f"長いので先頭の {core.RFI_MAX:,} 字だけを使います。"
+                return self._send(200, r)
             if parts[:2] != ["api", "works"]:
                 return self._send(404, {"error": "not found"})
             if len(parts) == 2:
