@@ -488,6 +488,25 @@ class Requirements(unittest.TestCase):
             srv.wait()
 
 
+class ModelList(unittest.TestCase):
+    """モデルの一覧（v0.3.1）：使えないモデルを外し、絞り込みに使う情報を持たせる。"""
+
+    def test_model_entry(self):
+        fresh_core("http://127.0.0.1:9/api/v1", tempfile.mkdtemp())
+        import llm
+        e = llm._model_entry
+        base = {"architecture": {"output_modalities": ["text"]}, "pricing": {"prompt": "0.000001", "completion": "0.000002"}, "created": 1760000000}
+        self.assertIsNone(e({**base, "id": "a/b:batch"}))
+        self.assertIsNone(e({**base, "id": "a/img", "architecture": {"output_modalities": ["image"]}}))
+        self.assertIsNone(e({**base, "id": "a/old", "expiration_date": "2020-01-01"}))
+        r = e({**base, "id": "a/b", "expiration_date": "2099-12-31"})
+        self.assertEqual((r["in_per_m"], r["out_per_m"], r["free"], r["created"], r["expires"]), (1.0, 2.0, False, 1760000000, "2099-12-31"))
+        self.assertTrue(e({**base, "id": "a/c:free", "pricing": {"prompt": "0", "completion": "0"}})["free"])
+        router = e({**base, "id": "openrouter/auto", "pricing": {"prompt": "-1", "completion": "-1"}})
+        self.assertEqual((router["in_per_m"], router["free"]), (None, False))
+        self.assertFalse(e({"id": "gpt-6-luna", "object": "model"})["free"])  # OpenCode：価格がない＝無料ではない
+
+
 class OpenCodeEndToEnd(unittest.TestCase):
     """偽の OpenCode Go（/zen/go/v1）でも、窓口を使い分けて提案から原案まで通ること。"""
 

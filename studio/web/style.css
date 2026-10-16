@@ -260,3 +260,13 @@ fieldset.tf legend { font-family: var(--mincho); font-size: 15px; padding: 0 6px
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .sheet.open .fit { display: block; }
 .sheet .fit b { display: block; font-size: 11.5px; color: var(--moss); font-weight: 600; }
+
+/* モデルの一覧（v0.3.1） */
+.mtools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0; font-size: 13px; }
+.mtools label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.mtools .ghost { margin-left: auto; }
+.mtag { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 10.5px; line-height: 16px; border: 1px solid var(--rule); color: var(--ink-2); vertical-align: 1px; }
+.mtag.free { border-color: var(--moss); color: var(--moss); }
+.mtag.new { border-color: var(--indigo); color: var(--indigo); }
+.mtag.exp { border-color: var(--shu); color: var(--shu); }
+.models { max-height: 340px; }

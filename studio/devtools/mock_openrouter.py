@@ -11,6 +11,7 @@
   MOCK_SKELETON_MAX=N   骨格の抜き出しで、1回に N 案より多く頼まれたら失敗する（上流が時間切れで諦めるのを真似る。小分けの経路を通すため）
   MOCK_FAIL_SKELETON=P03,P05  この案を含む骨格の依頼は必ず失敗する（取れない案が残る経路を通すため）
   MOCK_DELAY=秒   1回の応答を遅らせる（進み具合の表示を見るため）
+  MOCK_MODELS_FILE=path       /models に、そのファイル（OpenRouter の /models の写し）を返す（モデルの一覧を実際の件数で試すため）
 OpenCode Go の真似（/zen/go/v1：User-Agent と session の門、/responses・/messages、費用なしの応答）も残してある。
 """
 import argparse
@@ -181,6 +182,9 @@ class H(BaseHTTPRequestHandler):
         if "/zen/" in self.path and self.path.rstrip("/").endswith("/models"):  # OpenCode：価格なしの一覧
             return self._json(200, {"object": "list", "data": [{"id": m.split("/")[-1], "object": "model", "owned_by": "opencode"}
                                                                for m, _, _ in MODELS] + [{"id": "mockwire-odd", "object": "model"}]})
+        if self.path.rstrip("/").endswith("/models") and os.environ.get("MOCK_MODELS_FILE"):  # 本物の一覧の写しを返す（画面の一覧を、実際の件数で試すため）
+            with open(os.environ["MOCK_MODELS_FILE"], encoding="utf-8") as f:
+                return self._json(200, json.load(f))
         if self.path.rstrip("/").endswith("/models"):
             return self._json(200, {"data": [{"id": m, "name": m, "context_length": 200000,
                                               "pricing": {"prompt": f"{i / 1e6:.10f}", "completion": f"{o / 1e6:.10f}"}} for m, i, o in MODELS]})
