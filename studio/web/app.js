@@ -658,7 +658,8 @@ function renderDeck() {
   if (!S.deckV || !decks.find((b) => b.v === S.deckV)) S.deckV = decks.length ? decks[decks.length - 1].v : null;
   const cur = decks.find((b) => b.v === S.deckV);
   const fromV = S.deckFrom || (okDrafts.length ? okDrafts[okDrafts.length - 1].v : null);
-  const last = cur ? cur.opts : { audience: "社内の経営会議", purpose: "approve", slides: 12, minutes: 15 };
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, ".");
+  const last = Object.assign({ audience: "社内の経営会議", purpose: "approve", slides: 12, minutes: 15, company: "", date: today, presenter: "" }, cur ? cur.opts : {});
   el.innerHTML = `<header><h1>企画書たたき</h1><span class="muted">原案をスライドの構成案にして、PowerPoint の Copilot・Claude・ChatGPT・Gemini に渡す材料を作ります</span></header>
     ${!okDrafts.length ? `<p class="notice">機械検査を通った原案がまだありません。</p>` : `
     <div class="form">
@@ -667,6 +668,9 @@ function renderDeck() {
       <label class="f">目的<select id="kP">${Object.entries(snap.purposes).map(([k, v]) => `<option value="${k}" ${k === last.purpose ? "selected" : ""}>${h(v)}</option>`).join("")}</select></label>
       <label class="f">枚数（表紙を含む）<input type="number" id="kS" min="4" max="30" value="${last.slides}"></label>
       <label class="f">発表時間（分）<input type="number" id="kM" min="3" max="120" value="${last.minutes}"></label>
+      <label class="f">社名（表紙とフッター。空なら入れない）<input type="text" id="kC" value="${h(last.company)}" placeholder="例：株式会社サンプル／イノベーション推進室"></label>
+      <label class="f">発表日（空なら入れない）<input type="text" id="kT" value="${h(last.date)}" placeholder="例：2026.10.30"></label>
+      <label class="f">発表者（空なら入れない）<input type="text" id="kW" value="${h(last.presenter)}" placeholder="例：くろだ"></label>
       <label class="f">構成を組むモデル${modelSelect("kModel", S.settings.deck_model)}</label>
       <label class="f wide">追加の指示（任意）<textarea id="kI" placeholder="例：競合比較は表で1枚に／お願いは『PoC 予算 300万円の承認』"></textarea></label>
     </div>
@@ -677,7 +681,8 @@ function renderDeck() {
       <div><h3>版</h3>${versionList(decks, S.deckV, (b) => `<br><span class="muted">原案 v${b.draft_v}・${b.deck.slides.length}枚</span>`)}</div>
       <div id="kView"></div></div>` : ""}`;
   if ($("#kGo")) $("#kGo").onclick = () => guard(async () => {
-    const opts = { audience: $("#kA").value, purpose: $("#kP").value, slides: Number($("#kS").value), minutes: Number($("#kM").value) };
+    const opts = { audience: $("#kA").value, purpose: $("#kP").value, slides: Number($("#kS").value), minutes: Number($("#kM").value),
+      company: $("#kC").value, date: $("#kT").value, presenter: $("#kW").value };
     const d = await api("POST", `/api/works/${S.slug}/deck`, { draft_v: Number($("#kD").value), opts, model: $("#kModel").value, instruction: $("#kI").value });
     S.deckTab = "slides"; S.deckFrom = null;
     S.deckV = await waitJob(d.job, "たたきの作成"); toast(`たたき v${S.deckV} ができました`); render();
@@ -687,8 +692,8 @@ function renderDeck() {
   const view = $("#kView");
   view.innerHTML = `<div class="row tabs">
       ${[["slides", "スライド"], ["hand", "ツールに渡す"], ["edit", "自分で直す（JSON）"]].map(([k, l]) => `<button class="ghost small${S.deckTab === k ? " on" : ""}" data-t="${k}" type="button">${l}</button>`).join("")}
-      <span class="muted">v${cur.v}　原案 v${cur.draft_v}　${h(cur.opts.audience)}・${cur.deck.slides.length}枚・${cur.opts.minutes}分${cur.changes ? `　変更：${h(cur.changes)}` : ""}</span></div>
-    ${lintBox(cur.lint, "機械検査OK（各スライドに結論があり、原案にない数字もありません）")}
+      <span class="muted">v${cur.v}　原案 v${cur.draft_v}　${h(cur.opts.audience)}・${cur.deck.slides.length}枚・${cur.opts.minutes}分${[cur.opts.company, cur.opts.date, cur.opts.presenter].filter(Boolean).length ? "　" + h([cur.opts.company, cur.opts.date, cur.opts.presenter].filter(Boolean).join("・")) : ""}${cur.changes ? `　変更：${h(cur.changes)}` : ""}</span></div>
+    ${lintBox(cur.lint, (cur.lint.new_numbers || []).length || cur.lint.warnings.length ? "機械検査OK（各スライドに結論があります。下の注意を確かめてください）" : "機械検査OK（各スライドに結論があり、原案にない数字も仮の社名・日付もありません）")}
     <div id="kBody"></div>
     <div class="form" style="margin-top:14px"><label class="f wide">この版に指示を足して作り直す<textarea id="kR" placeholder="例：3枚目と4枚目をまとめる／リスクを2枚に分ける"></textarea></label></div>
     <div class="row"><button class="ghost" id="kRe" type="button">指示を足して作り直す</button></div>`;
@@ -736,6 +741,7 @@ async function renderHand(body, cur) {
       <button class="ghost" id="hCopy" type="button">依頼文をコピー</button>
       ${t !== "copilot" ? `<button class="ghost" id="hCopyAll" type="button">依頼文＋構成案をまとめてコピー</button>` : ""}
     </div>
+    <p class="muted">表紙とフッター：${h([["社名", cur.opts.company], ["発表日", cur.opts.date], ["発表者", cur.opts.presenter]].map(([k, v]) => `${k} ${v || "入れない"}`).join("／"))}。仕上がったスライドでは、表紙とフッターの日付・社名と、原案にない数字だけは目で確かめてください（渡した先の AI が足すことがあります）。</p>
     <h3>依頼文</h3><pre class="log prompt">${h(d.prompts[t])}</pre>
     <details><summary class="muted">ほかの形式</summary><div class="row">
       <a class="ghost small btn" download href="${base}&kind=deck_docx">Word（.docx）</a>

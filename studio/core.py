@@ -697,7 +697,10 @@ def deck_opts(o):
     purpose = o.get("purpose") if o.get("purpose") in DECK_PURPOSES else "approve"
     slides = max(4, min(int(o.get("slides") or 12), 30))
     minutes = max(3, min(int(o.get("minutes") or 15), 120))
-    return {"audience": str(o.get("audience") or "社内の経営会議")[:80], "purpose": purpose, "slides": slides, "minutes": minutes}
+    clean = lambda k, n: re.sub(r"\s+", " ", str(o.get(k) or "")).strip()[:n]  # noqa: E731
+    return {"audience": str(o.get("audience") or "社内の経営会議")[:80], "purpose": purpose, "slides": slides, "minutes": minutes,
+            # 表紙とフッターに入れるもの。空なら「入れない」と渡す（渡した先が仮の社名や日付を勝手に埋めないように。v0.2.1）
+            "company": clean("company", 60), "date": clean("date", 20), "presenter": clean("presenter", 40)}
 
 
 def _deck_check(o):
@@ -732,7 +735,8 @@ def make_deck(slug, draft_v, opts=None, model=None, instruction="", base_version
 
 
 def _deck_kw(o):
-    return {"AUDIENCE": o["audience"], "PURPOSE": DECK_PURPOSES[o["purpose"]], "SLIDES": o["slides"], "MINUTES": o["minutes"]}
+    return {"AUDIENCE": o["audience"], "PURPOSE": DECK_PURPOSES[o["purpose"]], "SLIDES": o["slides"], "MINUTES": o["minutes"],
+            "COVER": outputs.cover_line(o)}
 
 
 def _add_deck(slug, deck, draft_v, o, model, instruction, usd, base_version=None, changes="", origin="model"):
@@ -742,7 +746,7 @@ def _add_deck(slug, deck, draft_v, o, model, instruction, usd, base_version=None
         v = max([x["v"] for x in st["decks"]] or [0]) + 1
         st["decks"].append({"v": v, "ts": now(), "draft_v": draft_v, "opts": o, "model": model, "instruction": instruction, "base": base_version,
                             "usd": usd, "origin": origin, "changes": changes, "deck": deck,
-                            "lint": outputs.deck_lint(deck, dr["draft"], o["slides"])})
+                            "lint": outputs.deck_lint(deck, dr["draft"], o["slides"], o)})
         st["log"].append(f"{now()} たたき v{v}（原案 v{draft_v}、{origin}{'、v' + str(base_version) + ' から' if base_version else ''}）")
         save(slug, st)
     return v
@@ -784,7 +788,7 @@ def export(slug, kind, v, tool="claude"):
         return (f"{slug}_たたき_v{k['v']}_{tool}.md", outputs.deck_markdown(k["deck"], k["opts"], tool=tool).encode("utf-8"),
                 "text/markdown; charset=utf-8")
     if kind == "deck_marp":
-        return f"{slug}_たたき_v{k['v']}_marp.md", outputs.deck_marp(k["deck"]).encode("utf-8"), "text/markdown; charset=utf-8"
+        return f"{slug}_たたき_v{k['v']}_marp.md", outputs.deck_marp(k["deck"], k["opts"]).encode("utf-8"), "text/markdown; charset=utf-8"
     return (f"{slug}_たたき_v{k['v']}.docx", outputs.deck_docx(k["deck"], k["opts"]),
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
@@ -892,7 +896,7 @@ def snapshot(slug):
         d["lint"] = draft_lint(d["draft"])
     for k in out["decks"]:
         try:
-            k["lint"] = outputs.deck_lint(k["deck"], get_draft(st, k["draft_v"])["draft"], k["opts"]["slides"])
+            k["lint"] = outputs.deck_lint(k["deck"], get_draft(st, k["draft_v"])["draft"], k["opts"]["slides"], k["opts"])
         except StudioError:
             pass
     return out

@@ -314,6 +314,47 @@ class ChunkedClassify(unittest.TestCase):
             c.export_proposals("many", ["P01"], "xlsx")
 
 
+class CoverAndPlaceholders(unittest.TestCase):
+    """表紙とフッターの日付・社名（v0.2.1）：依頼文に入れ、仮の文字を機械で見つける。"""
+
+    def setUp(self):
+        fresh_core("http://127.0.0.1:9/api/v1", tempfile.mkdtemp())
+        import core
+        import outputs
+        self.core, self.o = core, outputs
+
+    def test_opts(self):
+        o = self.core.deck_opts({"company": "  株式会社サンプル\n", "date": "2026.10.30", "presenter": "くろだ"})
+        self.assertEqual((o["company"], o["date"], o["presenter"]), ("株式会社サンプル", "2026.10.30", "くろだ"))
+        self.assertEqual(self.core.deck_opts({})["company"], "")
+
+    def test_prompt_says_cover_and_forbids_placeholders(self):
+        deck = {"title": "t", "slides": [{"title": "a", "message": "b"}]}
+        o = self.core.deck_opts({"company": "株式会社サンプル", "date": "2026.10.30"})
+        for tool in self.o.TOOLS:
+            p = self.o.tool_prompt(tool, deck, o)
+            self.assertIn("社名：株式会社サンプル／発表日：2026.10.30／発表者：入れない", p)
+            self.assertIn("[CURRENT_DATE]", p)  # 入れてはいけない例として
+        self.assertIn("表紙とフッター：社名：株式会社サンプル", self.o.deck_markdown(deck, o))
+        self.assertIn('footer: "株式会社サンプル　2026.10.30"', self.o.deck_marp(deck, o))
+        self.assertIn("株式会社サンプル　2026.10.30", zipfile.ZipFile(io.BytesIO(self.o.deck_docx(deck, o))).read("word/document.xml").decode())
+
+    def test_lint_placeholders_and_cover_date(self):
+        draft = {"market": "国内に推定12,000社", "design": "2027年4月に提供開始"}
+        o = self.core.deck_opts({"company": "株式会社サンプル", "date": "2026.10.30"})
+        ok = {"subtitle": "株式会社サンプル　2026.10.30", "slides": [{"title": "表紙", "message": "企画のご提案", "bullets": ["2026.10.30"]},
+                                                         {"title": "市場", "message": "12000社が対象", "bullets": ["2027年4月に提供開始"]}]}
+        r = self.o.deck_lint(ok, draft, 2, o)
+        self.assertEqual(r["warnings"], [], r)  # 指定の発表日は「原案にない数字」にしない。本文の予定の日付は見ない
+        bad = {"subtitle": "COMPANY INC.", "slides": [{"title": "表紙", "message": "[CURRENT_DATE] 発表", "bullets": ["2026.03.31", "発表者 xxxx"]},
+                                                      {"title": "市場", "message": "株式会社〇〇と比べる"}]}
+        w = " ".join(self.o.deck_lint(bad, draft, 2, o)["warnings"])
+        for x in ("[CURRENT_DATE]", "xxxx", "COMPANY INC", "株式会社〇〇", "表紙の日付が指定の発表日と違います", "2026.3.31"):
+            self.assertIn(x, w)
+        w2 = " ".join(self.o.deck_lint(bad, draft, 2, self.core.deck_opts({}))["warnings"])
+        self.assertIn("指定：なし", w2)  # 発表日を指定していないのに表紙に日付がある
+
+
 class OpenCodeEndToEnd(unittest.TestCase):
     """偽の OpenCode Go（/zen/go/v1）でも、窓口を使い分けて提案から原案まで通ること。"""
 

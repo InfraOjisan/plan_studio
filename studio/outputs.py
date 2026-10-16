@@ -45,7 +45,23 @@ def _nums(text):
     return out
 
 
-def deck_lint(deck, draft, want_slides):
+# 渡した先（Gemini など）が埋めがちな仮の文字：[CURRENT_DATE]・{{社名}}・COMPANY INC.・株式会社〇〇・2026.00.00・xxxx など
+PLACEHOLDER = re.compile(r"\[[A-Z][A-Z0-9_ ]{2,}\]|\{\{[^}]*\}\}|\bCOMPANY\s*(INC|NAME|CO)\b|\bCompany\s+Name\b|\bACME\b|"
+                         r"株式会社[〇○●◯]+|[〇○●◯]+株式会社|[〇○●◯]{2,}|20\d\d[./年-]0?0[./月-]0?0|\bYYYY\b|[xXｘＸ]{3,}")
+DATE = re.compile(r"(20\d\d)\s*[./年-]\s*(\d{1,2})(?:\s*[./月-]\s*(\d{1,2}))?")
+
+
+def cover_line(opts):
+    """表紙とフッターに入れるもの（依頼文と構成案の両方に書く）。空の項目は「入れない」。"""
+    o = opts or {}
+    return "／".join(f"{k}：{o.get(f) or '入れない'}" for k, f in (("社名", "company"), ("発表日", "date"), ("発表者", "presenter")))
+
+
+def _ymd(text):
+    return {tuple(int(x) for x in m if x) for m in DATE.findall(str(text or ""))}
+
+
+def deck_lint(deck, draft, want_slides, opts=None):
     errors, warnings = [], []
     slides = (deck or {}).get("slides") or []
     if not slides:
@@ -64,12 +80,27 @@ def deck_lint(deck, draft, want_slides):
         if long_b:
             warnings.append(f"{i}枚目：長い箇条が {len(long_b)} 個（50字超）")
     src = _nums(" ".join(str(v) for v in (draft or {}).values() if isinstance(v, str)) + " " + " ".join(map(str, (draft or {}).get("checks") or [])))
+    src |= _nums(" ".join(str((opts or {}).get(k) or "") for k in ("company", "date", "presenter")))  # 指定した発表日などは原案になくてよい
     used = set()
     for s in slides:
         used |= _nums(" ".join([str(s.get("title", "")), str(s.get("message", "")), " ".join(map(str, s.get("bullets") or [])), str(s.get("visual", ""))]))
     new = sorted(used - src)
     if new:
         warnings.append("原案にない数字がスライドにあります（作られた数字かもしれません）：" + "、".join(new[:12]))
+    # 仮の社名・日付・伏せ字（v0.2.1）。本文の予定の日付は見ない。表紙（1枚目と副題）の日付だけを、指定の発表日と比べる
+    holders = []
+    for i, s in enumerate(slides, 1):
+        text = " ".join([str(s.get(k, "")) for k in ("title", "message", "visual", "notes")] + [str(x) for x in s.get("bullets") or []])
+        holders += [f"{i}枚目「{m.group(0)}」" for m in PLACEHOLDER.finditer(text)]
+    holders += [f"副題「{m.group(0)}」" for m in PLACEHOLDER.finditer(str((deck or {}).get("subtitle", "")))]
+    if holders:
+        warnings.append("仮の社名・日付・伏せ字があります（渡した先でそのまま残ります）：" + "、".join(holders[:8]))
+    want = _ymd((opts or {}).get("date"))
+    cover = " ".join([str((deck or {}).get("subtitle", ""))] + [str(slides[0].get(k, "")) for k in ("title", "message")] + [str(x) for x in slides[0].get("bullets") or []])
+    got = _ymd(cover)
+    if got and (not want or not got <= {w for w in want} | {w[:2] for w in want}):
+        warnings.append("表紙の日付が指定の発表日と違います：" + "、".join(".".join(str(x) for x in d) for d in sorted(got)) +
+                        f"（指定：{(opts or {}).get('date') or 'なし'}）")
     return {"ok": not errors, "errors": errors, "warnings": warnings, "new_numbers": new}
 
 
@@ -79,14 +110,17 @@ COMMON_RULES = """- 1枚のスライドは構成案の{UNIT}1つです。順番�
 - 「箇条」は本文です。言い回しは整えてよいですが、意味と数字は変えないでください。
 - 「図・表」の指示があるスライドは、指示どおりの図・表・グラフを作ってください。数字は構成案にあるものだけを使い、無い数字を作らないでください。
 - 「話すこと」は発表者ノートに入れてください（スライドには載せない）。
-- 日本語のフォントで、1枚あたりの文字を少なく。全体のトーンは{TONE}。"""
+- 日本語のフォントで、1枚あたりの文字を少なく。全体のトーンは{TONE}。
+- 表紙とフッターに入れるのは次のものだけです。{COVER}。「入れない」の項目は、欄ごと省いてください。
+- 構成案にない日付・社名・人名・ロゴは足さないでください。「COMPANY INC.」のような仮の社名、[CURRENT_DATE] のような置き換え用の文字、xxxx のような伏せ字も入れないでください。フッターに日付を入れるなら、全スライドで同じ発表日にしてください。"""
 
 TONES = {"approve": "落ち着いた社内向け（判断材料が一目で分かる）", "customer": "顧客向けの明るく信頼できる印象", "share": "軽く、議論を誘う"}
 
 
 def tool_prompt(tool, deck, opts):
     tone = TONES.get(opts.get("purpose"), TONES["approve"])
-    rules = COMMON_RULES.replace("{TONE}", tone).replace("{UNIT}", "見出し1" if tool == "copilot" else "「## 」")
+    rules = (COMMON_RULES.replace("{TONE}", tone).replace("{UNIT}", "見出し1" if tool == "copilot" else "「## 」")
+             .replace("{COVER}", cover_line(opts)))
     head = f"「{deck.get('title', '')}」の企画書を、{opts['audience']}向けに {len(deck.get('slides') or [])} 枚・{opts['minutes']} 分で発表するスライドにしてください。"
     if tool == "copilot":
         return (f"{head}\n添付の Word ファイルは構成案です。見出し1がスライドのタイトル、その下の見出し2が「言いたいこと」です。\n{rules}\n\n"
@@ -120,14 +154,16 @@ def deck_markdown(deck, opts, tool="claude"):
              f"# {deck.get('title', '')}"]
     if deck.get("subtitle"):
         parts.append(f"\n{deck['subtitle']}")
-    parts.append(f"\n- 聞き手：{opts['audience']}\n- 枚数：{len(slides)} 枚／{opts['minutes']} 分")
+    parts.append(f"\n- 聞き手：{opts['audience']}\n- 枚数：{len(slides)} 枚／{opts['minutes']} 分\n- 表紙とフッター：{cover_line(opts)}")
     for i, s in enumerate(slides, 1):
         parts.append("\n" + _slide_md(i, s))
     return "\n".join(parts).strip() + "\n"
 
 
-def deck_marp(deck):
-    out = ["---", "marp: true", "paginate: true", f"title: {deck.get('title', '')}", "---", ""]
+def deck_marp(deck, opts=None):
+    o = opts or {}
+    foot = "　".join(x for x in (o.get("company"), o.get("date")) if x)
+    out = ["---", "marp: true", "paginate: true", f"title: {deck.get('title', '')}"] + ([f"footer: \"{foot}\""] if foot else []) + ["---", ""]
     for i, s in enumerate(deck.get("slides") or [], 1):
         if i > 1:
             out += ["", "---", ""]
@@ -193,6 +229,9 @@ def deck_docx(deck, opts):
     body = [_p(deck.get("title", ""), "Title")]
     sub = deck.get("subtitle") or f"{opts['audience']}向け・{len(deck.get('slides') or [])}枚・{opts['minutes']}分"
     body.append(_p(sub, "Subtitle"))
+    meta = "　".join(x for x in (opts.get("company"), opts.get("date"), opts.get("presenter")) if x)
+    if meta:
+        body.append(_p(meta, "Subtitle"))
     for s in deck.get("slides") or []:
         body.append(_p(s.get("title", ""), "Heading1"))
         body.append(_p(s.get("message", ""), "Heading2"))
